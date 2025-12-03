@@ -48,6 +48,71 @@ function buildThrowsModel(throws, player1Id, player2Id) {
   return model;
 }
 
+// ==================================================================
+// SMOOTH UPDATE FOR LIVE MATCH DETAILS (NO FULL REFRESH)
+// ==================================================================
+
+async function smoothUpdateSetRow(updatedSet) {
+  const setNumber = updatedSet.set_number;
+
+  // ------- Find the existing set row in the DOM -------
+  const row = document.querySelector(`[data-set="${setNumber}"]`);
+
+  // If row doesn’t exist yet → create it (new set started)
+  if (!row) {
+    loadMatchDetail(window.currentMatchId, window.currentTournamentId);
+    return;
+  }
+
+  // ------- Update live set score (small points) -------
+  const p1 = row.querySelector('.set-p1');
+  const p2 = row.querySelector('.set-p2');
+
+  if (p1) p1.textContent = updatedSet.score_player1 ?? 0;
+  if (p2) p2.textContent = updatedSet.score_player2 ?? 0;
+
+  // ------- Update thrower label in scoring console -------
+  if (typeof scoringCurrentThrower !== "undefined") {
+    scoringCurrentThrower = updatedSet.current_thrower || "p1";
+
+    if (window.scoringMatch) {
+      const name = scoringCurrentThrower === "p1"
+        ? window.scoringMatch.p1Name
+        : window.scoringMatch.p2Name;
+
+      const label = document.getElementById("scoring-current-thrower-label");
+      if (label) label.textContent = `${name} to throw`;
+    }
+  }
+
+  // ------- Update overall set score if set was won -------
+  if (updatedSet.winner_player_id) {
+    updateOverallMatchScore();
+  }
+}
+
+// ==================================================================
+// UPDATE OVERALL MATCH SCORE WHEN A SET IS WON
+// ==================================================================
+
+async function updateOverallMatchScore() {
+  const { data: match } = await supabase
+    .from("matches")
+    .select("final_sets_player1, final_sets_player2")
+    .eq("id", window.currentMatchId)
+    .maybeSingle();
+
+  if (!match) return;
+
+  const p1 = document.querySelector('.match-score-p1');
+  const p2 = document.querySelector('.match-score-p2');
+
+  if (p1) p1.textContent = match.final_sets_player1 ?? 0;
+  if (p2) p2.textContent = match.final_sets_player2 ?? 0;
+}
+
+
+
 // --------------------------------------------
 // BUILD THROWS TABLE HTML
 // --------------------------------------------
