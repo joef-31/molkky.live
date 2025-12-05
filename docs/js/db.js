@@ -2,7 +2,7 @@
 // Supabase setup
 // ===========================================================
 
-const SUPERADMIN = true; // toggle false to hide scoring button
+const SUPERADMIN = true; // toggle false to hide scoring button by default
 
 const SUPABASE_URL = "https://gewdiegidqkfvikxscts.supabase.co";
 const SUPABASE_ANON_KEY =
@@ -10,21 +10,17 @@ const SUPABASE_ANON_KEY =
 
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ===========================================================
-// DATABASE WRITE HELPERS
-// ===========================================================
+// Make supabase available to other modules if needed
+window.supabaseClient = supabase;
 
-let SCORER_NAME = localStorage.getItem("scorerProfile") || "Guest";
-
-window.setScorerProfile = function(name) {
-  SCORER_NAME = name;
-  localStorage.setItem("scorerProfile", name);
-};
+// ===========================================================
+// DATABASE HELPERS – SETS & THROWS
+// ===========================================================
 
 /**
  * Update the live set score (and optionally current thrower) for a match/set.
  *
- * Expects a `current_thrower` text column on the `sets` table.
+ * Requires `current_thrower` text column on `sets` (can be NULL).
  */
 async function dbUpdateLiveSetScore({ matchId, setNumber, p1, p2, thrower }) {
   const patch = {
@@ -32,19 +28,88 @@ async function dbUpdateLiveSetScore({ matchId, setNumber, p1, p2, thrower }) {
     score_player2: p2,
   };
 
-  // Only send thrower if provided and non-empty
   if (typeof thrower === "string" && thrower.length > 0) {
     patch.current_thrower = thrower;
   }
 
-  return await supabase
+  const { data, error } = await supabase
     .from("sets")
     .update(patch)
     .eq("match_id", matchId)
     .eq("set_number", setNumber);
+
+  if (error) {
+    console.error("dbUpdateLiveSetScore error:", error);
+  }
+
+  return { data, error };
 }
 
-// Save a throw into Supabase
+/**
+ * Fetch the set row (id + fields) for a given match + set_number.
+ */
+async function dbGetSet(matchId, setNumber) {
+  const { data, error } = await supabase
+    .from("sets")
+    .select("*")
+    .eq("match_id", matchId)
+    .eq("set_number", setNumber)
+    .maybeSingle();
+
+  if (error) {
+    console.error("dbGetSet error:", error);
+  }
+
+  return { data, error };
+}
+
+/**
+ * Get or create a set row for (matchId, setNumber).
+ * Used so throws always have a valid set_id.
+ */
+async function dbGetOrCreateSet(matchId, setNumber) {
+  let { data, error } = await dbGetSet(matchId, setNumber);
+
+  if (!error && data) {
+    return { data, error: null };
+  }
+
+  // Create if not existing
+  const insertPayload = {
+    match_id: matchId,
+    set_number: setNumber,
+    score_player1: 0,
+    score_player2: 0,
+    winner_player_id: null,
+  };
+
+  const result = await supabase
+    .from("sets")
+    .insert(insertPayload)
+    .select("*")
+    .maybeSingle();
+
+  if (result.error) {
+    console.error("dbGetOrCreateSet insert error:", result.error);
+    return { data: null, error: result.error };
+  }
+
+  return { data: result.data, error: null };
+}
+
+/**
+ * Insert one throw, with correct set_id + set_number.
+ * 
+ * Expects:
+ *  - matchId: uuid
+ *  - setId: uuid (if you already resolved it – optional)
+ *  - setNumber: integer
+ *  - throwNumber: integer (1-based)
+ *  - playerId: uuid
+ *  - score: integer
+ *  - isMiss: boolean
+ *  - isFault: boolean
+ */
 async function dbInsertThrow({
   matchId,
   setId,
@@ -53,79 +118,128 @@ async function dbInsertThrow({
   playerId,
   score,
   isMiss,
-  isFault
+  isFault,
 }) {
-  return await supabase.from("throws").insert({
+  const record = {
     match_id: matchId,
-    set_id: setId || null,     // <-- NEW
+    set_id: setId || null,
     set_number: setNumber,
     throw_number: throwNumber,
     player_id: playerId,
     score: score,
-    is_miss: isMiss || false,
-    is_fault: isFault || false
-  });
+    is_miss: !!isMiss,
+    is_fault: !!isFault,
+  };
+
+  const { data, error } = await supabase.from("throws").insert(record);
+
+  if (error) {
+    console.error("dbInsertThrow error:", error, record);
+  }
+
+  return { data, error };
 }
 
-
-// Update a set's small points + winner if needed
+/**
+ * Update set small-points + optional winner.
+ */
 async function dbUpdateSet({ matchId, setNumber, sp1, sp2, winnerId }) {
-  return await supabase.from("sets")
+  const { data, error } = await supabase
+    .from("sets")
     .update({
       score_player1: sp1,
       score_player2: sp2,
-      winner_player_id: winnerId || null
+      winner_player_id: winnerId || null,
     })
     .eq("match_id", matchId)
     .eq("set_number", setNumber);
+
+  if (error) {
+    console.error("dbUpdateSet error:", error);
+  }
+
+  return { data, error };
 }
 
+/**
+ * Create NEXT set with small-points reset. Used when a set is won.
+ */
+async function dbCreateNextSet(matchId, previousSetNumber) {
+  const nextNumber = previousSetNumber + 1;
+
+  const { data, error } = await supabase
+    .from("sets")
+    .insert({
+      match_id: matchId,
+      set_number: nextNumber,
+      score_player1: 0,
+      score_player2: 0,
+      winner_player_id: null,
+    });
+
+  if (error) {
+    console.error("dbCreateNextSet error:", error);
+  }
+
+  return { data, error };
+}
+
+// expose helpers where needed
+window.dbUpdateLiveSetScore = dbUpdateLiveSetScore;
+window.dbGetSet = dbGetSet;
+window.dbGetOrCreateSet = dbGetOrCreateSet;
+window.dbInsertThrow = dbInsertThrow;
+window.dbUpdateSet = dbUpdateSet;
+window.dbCreateNextSet = dbCreateNextSet;
 
 // ========================================================
-// SCORING LOCK SYSTEM — SAFE + SELF-RECLAIMING
+// (OLD) SCORING LOCK SYSTEM – now unused, left for reference
 // ========================================================
+// You can delete this section once you're happy everything works
+// without locks. They are no longer called anywhere.
 
-// Who the scorer is (temporary local identity)
-// Later: replace with supabase.auth.getUser()
-const LOCAL_SCORER_ID = "local-user";
-
-// Acquire or refresh lock (TTL = 25 seconds)
-async function dbAcquireScoringLock(matchId) {
-  const expiresAt = new Date(Date.now() + 60 * 1000).toISOString();
+/**
+ * Create or refresh a scoring lock (no longer used).
+ */
+async function dbAcquireScoringLock(matchId, scorerName) {
+  const expiresAt = new Date(Date.now() + 60 * 1000).toISOString(); // 60 seconds
 
   const { data, error } = await supabase
     .from("scoring_locks")
     .upsert(
       {
         match_id: matchId,
-        locked_by: SCORER_NAME,
-        expires_at: expiresAt
+        locked_by: scorerName,
+        expires_at: expiresAt,
       },
       { onConflict: "match_id" }
     )
     .select()
     .maybeSingle();
 
+  if (error) {
+    console.error("dbAcquireScoringLock error:", error);
+  }
   return { data, error };
 }
 
-const scorerSelect = document.getElementById("profile-select");
-if (scorerSelect) {
-  scorerSelect.addEventListener("change", () => {
-    window.currentScorer = scorerSelect.value;
-  });
-  window.currentScorer = scorerSelect.value; // initial
-}
-
-// Release lock
+/**
+ * Release lock (no longer used).
+ */
 async function dbReleaseScoringLock(matchId) {
-  await supabase
+  const { error } = await supabase
     .from("scoring_locks")
     .delete()
     .eq("match_id", matchId);
+
+  if (error) {
+    console.error("dbReleaseScoringLock error:", error);
+  }
 }
 
-// Check lock state
+/**
+ * Check lock (no longer used).
+ */
 async function dbCheckScoringLock(matchId) {
   const { data, error } = await supabase
     .from("scoring_locks")
@@ -133,69 +247,10 @@ async function dbCheckScoringLock(matchId) {
     .eq("match_id", matchId)
     .maybeSingle();
 
-  if (!data) return { data, error: null };
-
-  const now = Date.now();
-  const expired =
-    data.expires_at && new Date(data.expires_at).getTime() < now;
-
-  // If it's your lock → you're allowed in
-  if (data.locked_by === SCORER_NAME) return { data: null, error: null };
-
-  if (expired) return { data: null, error: null };
-
-  return { data, error: null };
+  if (error) {
+    console.error("dbCheckScoringLock error:", error);
+  }
+  return { data, error };
 }
 
-
-// Refresh lock silently (only if you own it)
-async function dbRefreshScoringLock(matchId) {
-  const { data: lock } = await dbCheckScoringLock(matchId);
-  if (!lock) return;
-
-  if (lock.locked_by !== LOCAL_SCORER_ID) return;
-
-  // Extend TTL
-  const expiresAt = new Date(Date.now() + 25 * 1000).toISOString();
-  await supabase
-    .from("scoring_locks")
-    .update({ expires_at: expiresAt })
-    .eq("match_id", matchId);
-}
-
-// Refresh lock
-async function refreshScoreButtonLock(matchId) {
-  const scoreBtn = document.getElementById("scoreBtn");
-  if (!scoreBtn) return;
-
-  const { data: lock } = await dbCheckScoringLock(matchId);
-
-  // who am I?
-  const me = window.currentScorer || "Unknown";
-
-  if (!lock) {
-    // no lock
-    scoreBtn.dataset.locked = "no";
-    return;
-  }
-
-  // lock exists
-  if (lock.locked_by === me) {
-    // I own the lock – do NOT show "Locked"
-    scoreBtn.dataset.locked = "no";
-  } else {
-    // someone else owns the lock
-    scoreBtn.dataset.locked = "yes";
-  }
-}
-
-
-// Auto-refresh every 10 seconds while console is open
-setInterval(() => {
-  const consoleVisible =
-    document.getElementById("scoring-console")?.style.display === "block";
-
-  if (consoleVisible && window.scoringMatch) {
-    dbRefreshScoringLock(window.scoringMatch.matchId);
-  }
-}, 10_000);
+// (not exported to window on purpose)
