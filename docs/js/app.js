@@ -1,12 +1,12 @@
 // =======================================================
-// GLOBAL CONSTANTS / DOM HANDLES
+// GLOBAL CONSTANTS / FRIENDLIES
 // =======================================================
 
 const FRIENDLIES_TOURNAMENT_ID = "11111111-1111-1111-1111-111111111111";
 
-// Create "Add Friendly" button dynamically in the global header
+// "Add friendly" button in global headerTools (defined in ui.js)
 let addFriendlyBtn = null;
-if (headerTools) {
+if (typeof headerTools !== "undefined" && headerTools) {
   addFriendlyBtn = document.createElement("button");
   addFriendlyBtn.id = "addFriendlyBtn";
   addFriendlyBtn.className = "header-btn";
@@ -76,7 +76,6 @@ function showBackButton(handlerOrNull) {
 
 function updateScoreButtonVisibility(show) {
   if (!scoreBtn) return;
-  // SUPERADMIN comes from db.js; if you ever turn it off, this also hides Score.
   if (show && (typeof SUPERADMIN === "undefined" || SUPERADMIN)) {
     scoreBtn.style.display = "inline-flex";
   } else {
@@ -121,9 +120,9 @@ function handleRoute() {
     return;
   }
 
-  // #/friendlies
+  // #/friendlies → just the Friendlies tournament
   if (parts[1] === "friendlies" && !parts[2]) {
-    loadFriendliesView();
+    loadTournamentView(FRIENDLIES_TOURNAMENT_ID);
     return;
   }
 
@@ -177,14 +176,13 @@ function buildThrowsModel(throws, player1Id, player2Id) {
         if (isP1) cumP1 = 25;
         else cumP2 = 25;
       } else {
-        displayScore = "X"; // simple miss / non-resetting fault
+        displayScore = "X"; // normal miss / non-resetting fault
       }
     } else {
       let tentative = before + raw;
       const bust = tentative > 50;
       if (bust) {
-        // Bust -> reset to 25
-        displayScore = raw + "↓";
+        displayScore = raw + "↓"; // bust → reset to 25
         if (isP1) cumP1 = 25;
         else cumP2 = 25;
       } else {
@@ -257,15 +255,8 @@ const setsChannelMatchList = supabase
       const p1 = updated.score_player1 ?? "";
       const p2 = updated.score_player2 ?? "";
 
-const matchesTab = document.getElementById("tab-matches");
-const friendliesTab = document.getElementById("tab-friendlies");
-
-// visible if either exists & is displayed
-const isVisible =
-  (matchesTab && matchesTab.offsetParent !== null) ||
-  (friendliesTab && friendliesTab.offsetParent !== null);
-
-if (!isVisible) return;
+      const matchesTab = document.getElementById("tab-matches");
+      if (!matchesTab || matchesTab.offsetParent === null) return;
 
       const card = document.querySelector(`.card[data-mid="${matchId}"]`);
       if (!card) return;
@@ -331,7 +322,7 @@ async function smoothUpdateSetRow(updatedSet) {
       rightCell?.classList.add("winner");
   }
 
-  // Update who is to throw in header label (via scoring.js state)
+  // Update thrower label in scoring console
   if (typeof scoringCurrentThrower !== "undefined") {
     scoringCurrentThrower = updatedSet.current_thrower || "p1";
     if (window.scoringMatch) {
@@ -394,18 +385,18 @@ async function updateMatchListFinalScore(matchId, card) {
 }
 
 // =======================================================
-// LIVE THROWS: header throwstrip + (optional) table
+// LIVE THROWS: header throwstrip + expanded table
 // =======================================================
 
 async function updateLiveThrowsForSet(setNumber) {
   if (!window.currentMatchId) return;
 
-  const { data: throws, error } = await supabase
-    .from("throws")
-    .select("*")
-    .eq("match_id", window.currentMatchId)
-    .eq("set_number", setNumber)
-    .order("throw_number", { ascending: true });
+const { data: throws, error } = await supabase
+  .from("throws")
+  .select("id, match_id, set_number, throw_number, player_id, score, is_fault")
+  .eq("match_id", window.currentMatchId)
+  .eq("set_number", setNumber)
+  .order("throw_number", { ascending: true });
 
   if (error || !throws) return;
 
@@ -585,7 +576,7 @@ async function loadTournaments() {
     <div class="card clickable" data-friendlies="true">
       <div class="title-row">
         <div class="title">Friendlies</div>
-        <div class="subtitle">Pickup games & casual matches</div>
+        <div class="subtitle">Pickup & casual matches</div>
       </div>
     </div>
   `;
@@ -605,159 +596,6 @@ async function loadTournaments() {
       window.location.hash = "#/friendlies";
     });
   }
-}
-
-// =======================================================
-// LOAD FRIENDLIES VIEW (#/friendlies)
-// =======================================================
-
-async function loadFriendliesView() {
-  window.currentMatchId = null;
-  window.currentTournamentId = FRIENDLIES_TOURNAMENT_ID;
-  window.lastSeenSet = null;
-
-  showBackButton(() => {
-    window.location.hash = "#/tournaments";
-  });
-  updateScoreButtonVisibility(false);
-  setAddFriendlyVisible(true);
-
-  if (addFriendlyBtn) {
-    addFriendlyBtn.onclick = () => {
-      window.location.hash = "#/friendlies/new";
-    };
-  }
-
-  showLoading("Loading friendlies…");
-
-  await ensureFriendliesTournamentExists();
-
-  // Load friendlies
-  const { data: matches, error: matchError } = await supabase
-    .from("matches")
-    .select(`
-      id,
-      match_date,
-      status,
-      final_sets_player1,
-      final_sets_player2,
-      player1:player1_id ( id, name ),
-      player2:player2_id ( id, name )
-    `)
-    .eq("tournament_id", FRIENDLIES_TOURNAMENT_ID)
-    .order("match_date", { ascending: true });
-
-  if (matchError) {
-    console.error(matchError);
-    showError("Failed to load friendlies");
-    return;
-  }
-
-  // BUILD PAGE
-  let html = `
-    <div class="card">
-      <div class="tournament-header">
-        <div class="tournament-name">Friendlies</div>
-        <div class="subtitle">Pickup & casual matches</div>
-      </div>
-      <div id="tab-friendlies"></div>
-    </div>
-  `;
-  setContent(html);
-
-  const container = document.getElementById("tab-friendlies");
-
-  if (!matches || matches.length === 0) {
-    container.innerHTML =
-      '<div class="empty-message">No friendly matches yet. Click "Add friendly" to start one.</div>';
-    return;
-  }
-
-  let listHtml = '<div class="section-title">Matches</div>';
-
-  // -----------------------------------------------------
-  // IDENTICAL LIVE SET DETECTION LOGIC TO TOURNAMENT VIEW
-  // -----------------------------------------------------
-  const matchIds = matches.map((m) => m.id);
-  let liveSetByMatch = {};
-
-  if (matchIds.length > 0) {
-    const { data: setsData } = await supabase
-      .from("sets")
-      .select("match_id, set_number, score_player1, score_player2, winner_player_id")
-      .in("match_id", matchIds);
-
-    (setsData || []).forEach((s) => {
-      const isLive =
-        !s.winner_player_id &&
-        (s.score_player1 ?? 0) < 50 &&
-        (s.score_player2 ?? 0) < 50;
-
-      if (isLive) {
-        const existing = liveSetByMatch[s.match_id];
-        if (!existing || s.set_number > existing.set_number) {
-          liveSetByMatch[s.match_id] = {
-            p1: s.score_player1 ?? "",
-            p2: s.score_player2 ?? ""
-          };
-        }
-      }
-    });
-  }
-
-  // -----------------------
-  // RENDER FRIENDLY MATCHES
-  // -----------------------
-  matches.forEach((m) => {
-    const p1Name = m.player1?.name || "Player 1";
-    const p2Name = m.player2?.name || "Player 2";
-
-    const setsScore1 = m.final_sets_player1 ?? 0;
-    const setsScore2 = m.final_sets_player2 ?? 0;
-
-    const status = m.status || "scheduled";
-    let statusClass = status === "live" ? "live" : status === "finished" ? "finished" : "scheduled";
-    let statusLabel = status === "live" ? "Live" : status === "finished" ? "Finished" : "Scheduled";
-
-    const dateLabel = formatDate(m.match_date);
-
-    const liveSet = liveSetByMatch[m.id] || null;
-    const liveP1 = liveSet ? liveSet.p1 : "";
-    const liveP2 = liveSet ? liveSet.p2 : "";
-
-    listHtml += `
-      <div class="card clickable" data-mid="${m.id}" data-tid="${FRIENDLIES_TOURNAMENT_ID}">
-        <div class="match-card-grid">
-          <div class="mc-meta">${dateLabel}</div>
-
-          <div class="mc-player">${p1Name}</div>
-          <div class="mc-livebox ${liveSet ? "is-live" : ""}">${liveP1}</div>
-          <div class="mc-setscore">${setsScore1}</div>
-
-          <div class="mc-meta">
-            <span class="pill ${statusClass}">${statusLabel}</span>
-          </div>
-
-          <div class="mc-player">${p2Name}</div>
-          <div class="mc-livebox ${liveSet ? "is-live" : ""}">${liveP2}</div>
-          <div class="mc-setscore">${setsScore2}</div>
-        </div>
-      </div>
-    `;
-  });
-
-  container.innerHTML = listHtml;
-
-  // --------------------------
-  // ATTACH CLICK HANDLERS
-  // --------------------------
-  document.querySelectorAll("[data-mid]").forEach((el) => {
-    el.addEventListener("click", () => {
-      const mid = el.getAttribute("data-mid");
-      const tid = el.getAttribute("data-tid");
-      window.location.hash = `#/match/${mid}/${tid}`;
-    });
-  });
 }
 
 // =======================================================
@@ -789,12 +627,6 @@ async function loadFriendlyCreate() {
     console.error(error);
   }
 
-  // Pre-fill local date/time with "now"
-  const now = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  const defaultDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-  const defaultTime = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-
   const html = `
     <div class="card">
       <div class="tournament-header">
@@ -821,25 +653,6 @@ async function loadFriendlyCreate() {
         </label>
         <div id="friendly-p2-suggestions" class="friendly-suggestions"></div>
 
-        <hr class="friendly-divider" />
-
-        <div class="section-title">Scheduling</div>
-        <label class="friendly-schedule-toggle">
-          <input type="checkbox" id="friendly-manual-schedule" />
-          Schedule this match manually
-        </label>
-
-        <div id="friendly-schedule-fields" class="friendly-schedule-fields" style="display:none;">
-          <label>
-            Date
-            <input type="date" id="friendly-date" value="${defaultDate}" />
-          </label>
-          <label>
-            Time
-            <input type="time" id="friendly-time" value="${defaultTime}" />
-          </label>
-        </div>
-
         <button id="friendly-create-btn" class="header-btn" style="margin-top:10px;">
           Create & score this match
         </button>
@@ -857,18 +670,6 @@ async function loadFriendlyCreate() {
   const p2Sug = document.getElementById("friendly-p2-suggestions");
   const createBtn = document.getElementById("friendly-create-btn");
   const errBox = document.getElementById("friendly-error");
-
-  const manualScheduleChk = document.getElementById("friendly-manual-schedule");
-  const scheduleFields = document.getElementById("friendly-schedule-fields");
-  const dateInput = document.getElementById("friendly-date");
-  const timeInput = document.getElementById("friendly-time");
-
-  // Toggle visibility of date/time fields
-  if (manualScheduleChk && scheduleFields) {
-    manualScheduleChk.addEventListener("change", () => {
-      scheduleFields.style.display = manualScheduleChk.checked ? "grid" : "none";
-    });
-  }
 
   function showErrorMessage(msg) {
     if (!errBox) return;
@@ -968,35 +769,7 @@ async function loadFriendlyCreate() {
           throw new Error("Players must be different.");
         }
 
-        // Decide match_date
-        let matchDateIso;
-        const useManual = manualScheduleChk && manualScheduleChk.checked;
-
-        if (!useManual) {
-          // Auto: now
-          matchDateIso = new Date().toISOString();
-        } else {
-          const dateVal = dateInput?.value || "";
-          const timeVal = timeInput?.value || "";
-
-          if (!dateVal) {
-            throw new Error("Please choose a date for the scheduled match.");
-          }
-
-          // If time is empty, default to 00:00 local
-          const [year, month, day] = dateVal.split("-").map((n) => parseInt(n, 10));
-          let hours = 0;
-          let mins = 0;
-
-          if (timeVal) {
-            const [hStr, mStr] = timeVal.split(":");
-            hours = parseInt(hStr, 10) || 0;
-            mins = parseInt(mStr, 10) || 0;
-          }
-
-          const dt = new Date(year, month - 1, day, hours, mins);
-          matchDateIso = dt.toISOString();
-        }
+        const now = new Date().toISOString();
 
         const { data: inserted, error: matchErr } = await supabase
           .from("matches")
@@ -1005,7 +778,7 @@ async function loadFriendlyCreate() {
             player1_id: p1Id,
             player2_id: p2Id,
             status: "scheduled",
-            match_date: matchDateIso,
+            match_date: now,
             final_sets_player1: 0,
             final_sets_player2: 0,
           })
@@ -1028,7 +801,7 @@ async function loadFriendlyCreate() {
 }
 
 // =======================================================
-// LOAD TOURNAMENT VIEW (normal tournaments, not friendlies)
+// LOAD TOURNAMENT VIEW (normal tournaments + Friendlies)
 // =======================================================
 
 async function loadTournamentView(tournamentId) {
@@ -1036,13 +809,25 @@ async function loadTournamentView(tournamentId) {
   window.currentTournamentId = tournamentId;
   window.lastSeenSet = null;
 
+  const isFriendlies = tournamentId === FRIENDLIES_TOURNAMENT_ID;
+
   showBackButton(() => {
     window.location.hash = "#/tournaments";
   });
   updateScoreButtonVisibility(false);
-  setAddFriendlyVisible(false);
+  setAddFriendlyVisible(isFriendlies);
+
+  if (isFriendlies && addFriendlyBtn) {
+    addFriendlyBtn.onclick = () => {
+      window.location.hash = "#/friendlies/new";
+    };
+  }
 
   showLoading("Loading tournament…");
+
+  if (isFriendlies) {
+    await ensureFriendliesTournamentExists();
+  }
 
   const { data: matches, error: matchError } = await supabase
     .from("matches")
@@ -1071,6 +856,44 @@ async function loadTournamentView(tournamentId) {
     );
     return;
   }
+
+activeDateFilter = null;
+
+const matchDates = matches
+  .map((m) => isoDateOnly(m.match_date))
+  .filter(Boolean);
+
+renderDateBar(matchDates, (selectedDate) => {
+  renderMatchesForTournament(matches, selectedDate);
+});
+
+function renderMatchesForTournament(matches, dateFilter = null) {
+  const container = document.getElementById("tab-matches");
+  if (!container) return;
+
+  let filtered = matches;
+
+  if (dateFilter) {
+    filtered = matches.filter(
+      (m) => isoDateOnly(m.match_date) === dateFilter
+    );
+  }
+
+  if (filtered.length === 0) {
+    container.innerHTML =
+      '<div class="empty-message">No matches on this date.</div>';
+    return;
+  }
+
+  let html = '<div class="section-title">Matches</div>';
+
+  filtered.forEach(/* EXISTING match card code */);
+
+  container.innerHTML = html;
+
+  // rebind click handlers
+}
+
 
   const tournamentName = matches[0].tournament?.name || "Tournament";
   const matchIds = matches.map((m) => m.id);
@@ -1125,6 +948,14 @@ async function loadTournamentView(tournamentId) {
   `;
   setContent(html);
 
+  // Friendlies: hide standings tab completely
+  if (isFriendlies) {
+    const standingsTab = document.querySelector('.tab[data-tab="standings"]');
+    const standingsPanel = document.getElementById("tab-standings");
+    if (standingsTab) standingsTab.style.display = "none";
+    if (standingsPanel) standingsPanel.style.display = "none";
+  }
+
   const matchesContainer = document.getElementById("tab-matches");
   let matchesHtml = '<div class="section-title">Matches</div>';
 
@@ -1157,8 +988,8 @@ async function loadTournamentView(tournamentId) {
           <div class="mc-meta">${dateLabel}</div>
           <div class="mc-player">${p1Name}</div>
           <div class="mc-livebox ${liveSet ? "is-live" : ""}">${
-      liveP1 !== "" ? liveP1 : ""
-    }</div>
+            liveP1 !== "" ? liveP1 : ""
+          }</div>
           <div class="mc-setscore">${setsScore1}</div>
 
           <div class="mc-meta">
@@ -1167,8 +998,8 @@ async function loadTournamentView(tournamentId) {
 
           <div class="mc-player">${p2Name}</div>
           <div class="mc-livebox ${liveSet ? "is-live" : ""}">${
-      liveP2 !== "" ? liveP2 : ""
-    }</div>
+            liveP2 !== "" ? liveP2 : ""
+          }</div>
           <div class="mc-setscore">${setsScore2}</div>
         </div>
       </div>
@@ -1185,115 +1016,179 @@ async function loadTournamentView(tournamentId) {
     });
   });
 
-  // Standings
-  const standingsContainer = document.getElementById("tab-standings");
-  const matchesById = {};
-  matches.forEach((m) => (matchesById[m.id] = m));
+  // Standings (not used for Friendlies, but built for normal tournaments)
+  if (!isFriendlies) {
+    const standingsContainer = document.getElementById("tab-standings");
+    const matchesById = {};
+    matches.forEach((m) => (matchesById[m.id] = m));
 
-  const playerStats = {};
-  function ensurePlayer(id, name) {
-    if (!playerStats[id]) {
-      playerStats[id] = {
-        id,
-        name,
-        played: 0,
-        setsWon: 0,
-        setsLost: 0,
-        smallPoints: 0,
-      };
+    const playerStats = {};
+    function ensurePlayer(id, name) {
+      if (!playerStats[id]) {
+        playerStats[id] = {
+          id,
+          name,
+          played: 0,
+          setsWon: 0,
+          setsLost: 0,
+          smallPoints: 0,
+        };
+      }
     }
-  }
 
-  matches.forEach((m) => {
-    if (!m.player1?.id || !m.player2?.id) return;
-    if (m.status === "scheduled") return;
-    ensurePlayer(m.player1.id, m.player1.name);
-    ensurePlayer(m.player2.id, m.player2.name);
-    playerStats[m.player1.id].played += 1;
-    playerStats[m.player2.id].played += 1;
-  });
-
-  sets.forEach((s) => {
-    if (!s.match_id || !s.winner_player_id) return;
-    const m = matchesById[s.match_id];
-    if (!m || !m.player1 || !m.player2) return;
-
-    const p1Id = m.player1.id;
-    const p2Id = m.player2.id;
-    ensurePlayer(p1Id, m.player1.name);
-    ensurePlayer(p2Id, m.player2.name);
-
-    const winner = s.winner_player_id;
-    const loser = winner === p1Id ? p2Id : p1Id;
-
-    const winnerScore =
-      winner === p1Id ? s.score_player1 : s.score_player2;
-    const loserScore =
-      winner === p1Id ? s.score_player2 : s.score_player1;
-
-    playerStats[winner].setsWon += 1;
-    playerStats[loser].setsLost += 1;
-    playerStats[winner].smallPoints += winnerScore ?? 0;
-    playerStats[loser].smallPoints += loserScore ?? 0;
-  });
-
-  const standingsArr = Object.values(playerStats);
-  standingsArr.sort((a, b) => {
-    if (b.setsWon !== a.setsWon) return b.setsWon - a.setsWon;
-    if (b.smallPoints !== a.smallPoints)
-      return b.smallPoints - a.smallPoints;
-    return a.name.localeCompare(b.name);
-  });
-
-  let standingsHtml = "";
-  standingsHtml += `<div class="standings-group-title">Group A</div>`;
-  if (standingsArr.length === 0) {
-    standingsHtml +=
-      '<div class="empty-message">No results yet for standings.</div>';
-  } else {
-    standingsHtml += `
-      <table class="standings-table">
-        <thead>
-          <tr>
-            <th>Player</th>
-            <th>P</th>
-            <th>SW</th>
-            <th>SL</th>
-            <th>SP</th>
-          </tr>
-        </thead>
-        <tbody>
-    `;
-    standingsArr.forEach((p) => {
-      standingsHtml += `
-        <tr>
-          <td>${p.name}</td>
-          <td>${p.played}</td>
-          <td>${p.setsWon}</td>
-          <td>${p.setsLost}</td>
-          <td>${p.smallPoints}</td>
-        </tr>
-      `;
+    matches.forEach((m) => {
+      if (!m.player1?.id || !m.player2?.id) return;
+      if (m.status === "scheduled") return;
+      ensurePlayer(m.player1.id, m.player1.name);
+      ensurePlayer(m.player2.id, m.player2.name);
+      playerStats[m.player1.id].played += 1;
+      playerStats[m.player2.id].played += 1;
     });
-    standingsHtml += "</tbody></table>";
+
+    sets.forEach((s) => {
+      if (!s.match_id || !s.winner_player_id) return;
+      const m = matchesById[s.match_id];
+      if (!m || !m.player1 || !m.player2) return;
+
+      const p1Id = m.player1.id;
+      const p2Id = m.player2.id;
+      ensurePlayer(p1Id, m.player1.name);
+      ensurePlayer(p2Id, m.player2.name);
+
+      const winner = s.winner_player_id;
+      const loser = winner === p1Id ? p2Id : p1Id;
+
+      const winnerScore =
+        winner === p1Id ? s.score_player1 : s.score_player2;
+      const loserScore =
+        winner === p1Id ? s.score_player2 : s.score_player1;
+
+      playerStats[winner].setsWon += 1;
+      playerStats[loser].setsLost += 1;
+      playerStats[winner].smallPoints += winnerScore ?? 0;
+      playerStats[loser].smallPoints += loserScore ?? 0;
+    });
+
+    const standingsArr = Object.values(playerStats);
+    standingsArr.sort((a, b) => {
+      if (b.setsWon !== a.setsWon) return b.setsWon - a.setsWon;
+      if (b.smallPoints !== a.smallPoints)
+        return b.smallPoints - a.smallPoints;
+      return a.name.localeCompare(b.name);
+    });
+
+    let standingsHtml = "";
+    standingsHtml += `<div class="standings-group-title">Group A</div>`;
+    if (standingsArr.length === 0) {
+      standingsHtml +=
+        '<div class="empty-message">No results yet for standings.</div>';
+    } else {
+      standingsHtml += `
+        <table class="standings-table">
+          <thead>
+            <tr>
+              <th>Player</th>
+              <th>P</th>
+              <th>SW</th>
+              <th>SL</th>
+              <th>SP</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      standingsArr.forEach((p) => {
+        standingsHtml += `
+          <tr>
+            <td>${p.name}</td>
+            <td>${p.played}</td>
+            <td>${p.setsWon}</td>
+            <td>${p.setsLost}</td>
+            <td>${p.smallPoints}</td>
+          </tr>
+        `;
+      });
+      standingsHtml += "</tbody></table>";
+    }
+
+    standingsContainer.innerHTML = standingsHtml;
+
+    document.querySelectorAll(".tab-row .tab").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const tabId = tab.getAttribute("data-tab");
+        document
+          .querySelectorAll(".tab-row .tab")
+          .forEach((t) => t.classList.remove("active"));
+        tab.classList.add("active");
+        document.getElementById("tab-matches").style.display =
+          tabId === "matches" ? "block" : "none";
+        document.getElementById("tab-standings").style.display =
+          tabId === "standings" ? "block" : "none";
+      });
+    });
+  }
+}
+
+// =======================================================
+// DATE BAR STATE
+// =======================================================
+
+let activeDateFilter = null; // yyyy-mm-dd or null
+
+function isoDateOnly(iso) {
+  if (!iso) return null;
+  return iso.split("T")[0];
+}
+
+function isToday(dateStr) {
+  const today = new Date().toISOString().split("T")[0];
+  return dateStr === today;
+}
+
+function renderDateBar(matchDates, onSelect) {
+  const bar = document.getElementById("date-bar");
+  if (!bar) return;
+
+  const today = new Date().toISOString().split("T")[0];
+  const unique = Array.from(new Set(matchDates.filter(Boolean)));
+
+  if (!unique.includes(today)) {
+    unique.push(today);
   }
 
-  standingsContainer.innerHTML = standingsHtml;
+  unique.sort(); // chronological
 
-  document.querySelectorAll(".tab-row .tab").forEach((tab) => {
-    tab.addEventListener("click", () => {
-      const tabId = tab.getAttribute("data-tab");
-      document
-        .querySelectorAll(".tab-row .tab")
-        .forEach((t) => t.classList.remove("active"));
-      tab.classList.add("active");
-      document.getElementById("tab-matches").style.display =
-        tabId === "matches" ? "block" : "none";
-      document.getElementById("tab-standings").style.display =
-        tabId === "standings" ? "block" : "none";
+  bar.innerHTML = unique
+    .map((d) => {
+      const label = new Date(d).toLocaleDateString("en-GB", {
+        weekday: "short",
+        day: "2-digit",
+        month: "short",
+      });
+
+      return `
+        <div class="date-pill ${d === activeDateFilter ? "active" : ""}"
+             data-date="${d}">
+          <div>${label}</div>
+          ${
+            isToday(d)
+              ? `<div class="date-sub">(Today)</div>`
+              : ""
+          }
+        </div>
+      `;
+    })
+    .join("");
+
+  bar.querySelectorAll(".date-pill").forEach((pill) => {
+    pill.addEventListener("click", () => {
+      const d = pill.dataset.date;
+      activeDateFilter = d === activeDateFilter ? null : d;
+      onSelect(activeDateFilter);
     });
   });
 }
+
+
 
 // =======================================================
 // LOAD MATCH DETAIL (shared for tournaments + friendlies)
@@ -1304,21 +1199,15 @@ async function loadMatchDetail(matchId, tournamentId) {
   window.currentTournamentId = tournamentId;
   window.lastSeenSet = null;
 
-const isFriendlies = tournamentId === FRIENDLIES_TOURNAMENT_ID;
-
-showBackButton(() => {
-  if (isFriendlies) {
-    window.location.hash = "#/friendlies";
-  } else {
-    window.location.hash = `#/tournament/${tournamentId}`;
-  }
-});
-
+  showBackButton(() => {
+    loadTournamentView(tournamentId);
+  });
   updateScoreButtonVisibility(true);
   setAddFriendlyVisible(false);
 
   showLoading("Loading match…");
 
+  // --- Load match record ---
   const { data: match, error: matchError } = await supabase
     .from("matches")
     .select(`
@@ -1340,6 +1229,7 @@ showBackButton(() => {
     return;
   }
 
+  // --- Load sets ---
   const { data: sets, error: setsError } = await supabase
     .from("sets")
     .select("*")
@@ -1352,6 +1242,7 @@ showBackButton(() => {
     return;
   }
 
+  // --- Load throws ---
   const { data: throws, error: throwsError } = await supabase
     .from("throws")
     .select("*")
@@ -1365,6 +1256,7 @@ showBackButton(() => {
     return;
   }
 
+  // Group throws by set_number for easy lookup later
   const throwsBySet = {};
   (throws || []).forEach((t) => {
     if (!throwsBySet[t.set_number]) throwsBySet[t.set_number] = [];
@@ -1373,26 +1265,24 @@ showBackButton(() => {
 
   const p1Name = match.player1?.name || "Player 1";
   const p2Name = match.player2?.name || "Player 2";
-  const tournamentName = match.tournament?.name || (isFriendlies ? "Friendlies" : "Tournament");
+  const tournamentName = match.tournament?.name || "Tournament";
 
-  const status = match.status || "scheduled";
+  // Status pill
   let pillClass = "scheduled";
   let pillLabel = "Scheduled";
-
-  if (status === "live") {
+  if (match.status === "live") {
     pillClass = "live";
     pillLabel = "Live";
-  } else if (status === "finished") {
+  } else if (match.status === "finished") {
     pillClass = "finished";
     pillLabel = "Finished";
   }
 
-  const overallSets =
-    (match.final_sets_player1 ?? 0) +
-    " – " +
-    (match.final_sets_player2 ?? 0);
+  const overallSets = `${match.final_sets_player1 ?? 0} – ${
+    match.final_sets_player2 ?? 0
+  }`;
 
-  // determine live set
+  // Determine live set (for header + throwstrip only)
   let currentSet = null;
   if (sets && sets.length > 0) {
     currentSet = sets.find(
@@ -1406,7 +1296,8 @@ showBackButton(() => {
   const liveSP1 = currentSet ? currentSet.score_player1 ?? 0 : 0;
   const liveSP2 = currentSet ? currentSet.score_player2 ?? 0 : 0;
 
-  let html = `
+  // --- Render header + skeleton for sets ---
+  const html = `
     <div class="card top-card">
       <div class="subtitle">${tournamentName}</div>
 
@@ -1440,6 +1331,7 @@ showBackButton(() => {
 
   setContent(html);
 
+  // Keep scoring console in sync
   if (SUPERADMIN) {
     resetScoringStateForMatch(match, sets || []);
   }
@@ -1451,6 +1343,7 @@ showBackButton(() => {
     return;
   }
 
+  // --- Build the sets list with EMPTY expanded panels ---
   let setsHtml = `<div class="sets-wrapper">`;
   let cumSetP1 = 0;
   let cumSetP2 = 0;
@@ -1466,23 +1359,7 @@ showBackButton(() => {
     if (p1Win) cumSetP1++;
     if (p2Win) cumSetP2++;
 
-    const cumDisplay = cumSetP1 + "–" + cumSetP2;
-
-    const setThrowsRaw = throwsBySet[setNum] || [];
-    const model = buildThrowsModel(
-      setThrowsRaw,
-      match.player1?.id,
-      match.player2?.id
-    );
-    const hasThrows = model.length > 0;
-
-    const expandedHtml = hasThrows
-      ? `
-        <div class="set-throws-expanded" data-set="${setNum}" style="display:none;">
-          ${buildThrowsTableHTML(model, p1Name, p2Name)}
-        </div>
-      `
-      : "";
+    const cumDisplay = `${cumSetP1}–${cumSetP2}`;
 
     setsHtml += `
       <div class="set-block" data-set="${setNum}">
@@ -1491,7 +1368,7 @@ showBackButton(() => {
           <div class="col mid">${cumDisplay}</div>
           <div class="col right ${p2Win ? "winner" : ""}">${p2Score}</div>
         </div>
-        ${expandedHtml}
+        <div class="set-throws-expanded" data-set="${setNum}" style="display:none;"></div>
       </div>
     `;
   });
@@ -1499,41 +1376,61 @@ showBackButton(() => {
   setsHtml += `</div>`;
   setsContainer.innerHTML = setsHtml;
 
-  if (scoreBtn) {
-    scoreBtn.onclick = openScoringConsole;
-  }
-
-  // Click to expand/collapse throws for one set at a time
+  // --- Click handler: lazily build the throws table on expand ---
   document.querySelectorAll(".set-main-row").forEach((row) => {
     row.addEventListener("click", () => {
-      const setNum = row.getAttribute("data-set");
+      const setNum = Number(row.getAttribute("data-set"));
       const expanded = document.querySelector(
-        '.set-throws-expanded[data-set="' + setNum + '"]'
+        `.set-throws-expanded[data-set="${setNum}"]`
       );
       if (!expanded) return;
 
       const isOpen = expanded.style.display === "block";
 
-      // close all others
+      // Close all others
       document.querySelectorAll(".set-throws-expanded").forEach((el) => {
         el.style.display = "none";
       });
 
-      if (!isOpen) {
-        expanded.style.display = "block";
+      if (isOpen) {
+        // Already open → now closed
+        expanded.style.display = "none";
+        return;
       }
+
+      // Build model from raw throws for THIS set
+      const raw = throwsBySet[setNum] || [];
+      const model = buildThrowsModel(
+        raw,
+        match.player1?.id,
+        match.player2?.id
+      );
+
+      expanded.innerHTML = model.length
+        ? buildThrowsTableHTML(model, p1Name, p2Name)
+        : '<div class="empty-message">No throw history for this set.</div>';
+
+      expanded.style.display = "block";
     });
   });
 
+  // Score button opens scoring console
+  if (scoreBtn) {
+    scoreBtn.onclick = openScoringConsole;
+  }
+
+  // Ensure header live set score stays in sync
   const headerSetScoreEl = document.getElementById("header-live-setscore");
   if (headerSetScoreEl) {
     headerSetScoreEl.textContent = `${liveSP1} – ${liveSP2}`;
   }
 
+  // Only the live set drives the header throwstrip
   if (currentSet) {
     updateLiveThrowsForSet(currentSet.set_number);
   }
 }
+
 
 // =======================================================
 // INITIAL LOAD

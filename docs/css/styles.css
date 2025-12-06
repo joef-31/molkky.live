@@ -15,6 +15,7 @@
   --live-set-text: #a9d4ff;
   --header-bg: rgba(5, 8, 22, 0.92);
   --reset-amber: #ffb74d;
+
 }
 
 * {
@@ -449,8 +450,8 @@ h1 {
   margin-top: 4px;
   padding-top: 4px;
   border-top: 1px dashed var(--border-subtle);
-  max-height: 0;
-  overflow: hidden;
+  max-height: none;
+  overflow: visible;
   transition: max-height 0.18s ease-out;
 }
 
@@ -666,6 +667,33 @@ h1 {
   font-size: 0.78rem;
   color: var(--text-muted);
 }
+
+.date-bar {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  margin: 8px 0 12px;
+}
+
+.date-pill {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #e8eef7;
+  cursor: pointer;
+  text-align: center;
+  min-width: 72px;
+}
+
+.date-pill.active {
+  background: #1e6fd9;
+  color: white;
+}
+
+.date-sub {
+  font-size: 0.75em;
+  opacity: 0.7;
+}
+
 
 /* Responsive tweaks */
 
