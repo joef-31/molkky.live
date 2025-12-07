@@ -804,6 +804,83 @@ async function loadFriendlyCreate() {
 // LOAD TOURNAMENT VIEW (normal tournaments + Friendlies)
 // =======================================================
 
+function renderMatchCards(matches, tournamentId, liveSetByMatch, dateFilter) {
+  const matchesContainer = document.getElementById("tab-matches");
+  if (!matchesContainer) return;
+
+  let filtered = matches;
+  if (dateFilter) {
+    filtered = matches.filter(
+      (m) => isoDateOnly(m.match_date) === dateFilter
+    );
+  }
+
+  if (filtered.length === 0) {
+    matchesContainer.innerHTML =
+      '<div class="empty-message">No matches on this date.</div>';
+    return;
+  }
+
+  let html = '<div class="section-title">Matches</div>';
+
+  filtered.forEach((m) => {
+    const p1Name = m.player1?.name || "Player 1";
+    const p2Name = m.player2?.name || "Player 2";
+    const setsScore1 = m.final_sets_player1 ?? 0;
+    const setsScore2 = m.final_sets_player2 ?? 0;
+
+    const status = m.status || "scheduled";
+    let statusClass = "scheduled";
+    let statusLabel = "Scheduled";
+
+    if (status === "live") {
+      statusClass = "live";
+      statusLabel = "Live";
+    } else if (status === "finished") {
+      statusClass = "finished";
+      statusLabel = "Finished";
+    }
+
+    const dateLabel = formatDate(m.match_date);
+    const liveSet = status === "live" ? liveSetByMatch[m.id] : null;
+    const liveP1 = liveSet ? liveSet.p1 : "";
+    const liveP2 = liveSet ? liveSet.p2 : "";
+
+    html += `
+      <div class="card clickable" data-mid="${m.id}" data-tid="${tournamentId}">
+        <div class="match-card-grid">
+          <div class="mc-meta">${dateLabel}</div>
+          <div class="mc-player">${p1Name}</div>
+          <div class="mc-livebox ${liveSet ? "is-live" : ""}">
+            ${liveP1 ?? ""}
+          </div>
+          <div class="mc-setscore">${setsScore1}</div>
+
+          <div class="mc-meta">
+            <span class="pill ${statusClass}">${statusLabel}</span>
+          </div>
+
+          <div class="mc-player">${p2Name}</div>
+          <div class="mc-livebox ${liveSet ? "is-live" : ""}">
+            ${liveP2 ?? ""}
+          </div>
+          <div class="mc-setscore">${setsScore2}</div>
+        </div>
+      </div>
+    `;
+  });
+
+  matchesContainer.innerHTML = html;
+
+  document.querySelectorAll("[data-mid]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const mid = el.getAttribute("data-mid");
+      const tid = el.getAttribute("data-tid");
+      window.location.hash = `#/match/${mid}/${tid}`;
+    });
+  });
+}
+
 async function loadTournamentView(tournamentId) {
   window.currentMatchId = null;
   window.currentTournamentId = tournamentId;
@@ -867,6 +944,13 @@ renderDateBar(matchDates, (selectedDate) => {
   renderMatchesForTournament(matches, selectedDate);
 });
 
+function filterMatchesByDate(matches, dateFilter) {
+  if (!dateFilter) return matches;
+  return matches.filter(
+    (m) => isoDateOnly(m.match_date) === dateFilter
+  );
+}
+
 function renderMatchesForTournament(matches, dateFilter = null) {
   const container = document.getElementById("tab-matches");
   if (!container) return;
@@ -887,7 +971,7 @@ function renderMatchesForTournament(matches, dateFilter = null) {
 
   let html = '<div class="section-title">Matches</div>';
 
-  filtered.forEach(/* EXISTING match card code */);
+ // filtered.forEach(/* EXISTING match card code */);
 
   container.innerHTML = html;
 
@@ -931,6 +1015,14 @@ function renderMatchesForTournament(matches, dateFilter = null) {
     }
   });
 
+activeDateFilter = null;
+
+renderDateBar(matchDates, (selectedDate) => {
+  activeDateFilter = selectedDate;
+  renderMatchCards(matches, tournamentId, liveSetByMatch, activeDateFilter);
+});
+
+
   let html = `
     <div class="card">
       <div class="tournament-header">
@@ -956,57 +1048,7 @@ function renderMatchesForTournament(matches, dateFilter = null) {
     if (standingsPanel) standingsPanel.style.display = "none";
   }
 
-  const matchesContainer = document.getElementById("tab-matches");
-  let matchesHtml = '<div class="section-title">Matches</div>';
-
-  matches.forEach((m) => {
-    const p1Name = m.player1?.name || "Player 1";
-    const p2Name = m.player2?.name || "Player 2";
-    const setsScore1 = m.final_sets_player1 ?? 0;
-    const setsScore2 = m.final_sets_player2 ?? 0;
-
-    const status = m.status || "scheduled";
-    let statusClass = "scheduled";
-    let statusLabel = "Scheduled";
-
-    if (status === "live") {
-      statusClass = "live";
-      statusLabel = "Live";
-    } else if (status === "finished") {
-      statusClass = "finished";
-      statusLabel = "Finished";
-    }
-
-    const dateLabel = formatDate(m.match_date);
-    const liveSet = status === "live" ? liveSetByMatch[m.id] : null;
-    const liveP1 = liveSet ? liveSet.p1 : "";
-    const liveP2 = liveSet ? liveSet.p2 : "";
-
-    matchesHtml += `
-      <div class="card clickable" data-mid="${m.id}" data-tid="${tournamentId}">
-        <div class="match-card-grid">
-          <div class="mc-meta">${dateLabel}</div>
-          <div class="mc-player">${p1Name}</div>
-          <div class="mc-livebox ${liveSet ? "is-live" : ""}">${
-            liveP1 !== "" ? liveP1 : ""
-          }</div>
-          <div class="mc-setscore">${setsScore1}</div>
-
-          <div class="mc-meta">
-            <span class="pill ${statusClass}">${statusLabel}</span>
-          </div>
-
-          <div class="mc-player">${p2Name}</div>
-          <div class="mc-livebox ${liveSet ? "is-live" : ""}">${
-            liveP2 !== "" ? liveP2 : ""
-          }</div>
-          <div class="mc-setscore">${setsScore2}</div>
-        </div>
-      </div>
-    `;
-  });
-
-  matchesContainer.innerHTML = matchesHtml;
+renderMatchCards(matches, tournamentId, liveSetByMatch, null);
 
   document.querySelectorAll("[data-mid]").forEach((el) => {
     el.addEventListener("click", () => {
@@ -1169,11 +1211,7 @@ function renderDateBar(matchDates, onSelect) {
         <div class="date-pill ${d === activeDateFilter ? "active" : ""}"
              data-date="${d}">
           <div>${label}</div>
-          ${
-            isToday(d)
-              ? `<div class="date-sub">(Today)</div>`
-              : ""
-          }
+          ${isToday(d) ? `<div class="date-sub">(Today)</div>` : ""}
         </div>
       `;
     })
@@ -1183,6 +1221,12 @@ function renderDateBar(matchDates, onSelect) {
     pill.addEventListener("click", () => {
       const d = pill.dataset.date;
       activeDateFilter = d === activeDateFilter ? null : d;
+
+      // Update visual active state
+      bar.querySelectorAll(".date-pill").forEach((p) => {
+        p.classList.toggle("active", p.dataset.date === activeDateFilter);
+      });
+
       onSelect(activeDateFilter);
     });
   });
