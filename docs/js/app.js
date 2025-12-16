@@ -2099,253 +2099,253 @@ function renderTournamentMatchesTable(matches = []) {
 }
 
 
-    async function loadMatchDetail(matchId, tournamentId) {
-        window.currentMatchId = matchId;
-        window.currentTournamentId = tournamentId;
-        window.lastSeenSet = null;
+async function loadMatchDetail(matchId, tournamentId) {
+	window.currentMatchId = matchId;
+	window.currentTournamentId = tournamentId;
+	window.lastSeenSet = null;
 
-        showBackButton(() => {
-            window.location.hash = `#/tournament/${tournamentId}/overview?tab=daily`;
-        });
+	showBackButton(() => {
+		window.location.hash = `#/tournament/${tournamentId}/overview?tab=daily`;
+	});
 
-        updateScoreButtonVisibility(true);
-        setAddFriendlyVisible(false);
+	updateScoreButtonVisibility(true);
+	setAddFriendlyVisible(false);
 
-        showLoading("Loading match…");
+	showLoading("Loading match…");
 
-        // --- Load match record ---
-        const { data: match, error: matchError } = await supabase
-            .from("matches")
-            .select(
-                `
-      id,
-      match_date,
-      status,
-      final_sets_player1,
-      final_sets_player2,
-      player1:player1_id ( id, name ),
-      player2:player2_id ( id, name ),
-      tournament:tournament_id ( id, name )
-    `
-            )
-            .eq("id", matchId)
-            .maybeSingle();
+	// --- Load match record ---
+	const { data: match, error: matchError } = await supabase
+		.from("matches")
+		.select(
+			`
+  id,
+  match_date,
+  status,
+  final_sets_player1,
+  final_sets_player2,
+  player1:player1_id ( id, name ),
+  player2:player2_id ( id, name ),
+  tournament:tournament_id ( id, name )
+`
+		)
+		.eq("id", matchId)
+		.maybeSingle();
 
-        if (matchError || !match) {
-            console.error(matchError);
-            showError("Failed to load match");
-            return;
-        }
+	if (matchError || !match) {
+		console.error(matchError);
+		showError("Failed to load match");
+		return;
+	}
 
-        // --- Load sets ---
-        const { data: sets, error: setsError } = await supabase
-            .from("sets")
-            .select("*")
-            .eq("match_id", matchId)
-            .order("set_number", { ascending: true });
+	// --- Load sets ---
+	const { data: sets, error: setsError } = await supabase
+		.from("sets")
+		.select("*")
+		.eq("match_id", matchId)
+		.order("set_number", { ascending: true });
 
-        if (setsError) {
-            console.error(setsError);
-            showError("Failed to load sets");
-            return;
-        }
+	if (setsError) {
+		console.error(setsError);
+		showError("Failed to load sets");
+		return;
+	}
 
-        // --- Load throws ---
-        const { data: throws, error: throwsError } = await supabase
-            .from("throws")
-            .select("*")
-            .eq("match_id", matchId)
-            .order("set_number", { ascending: true })
-            .order("throw_number", { ascending: true });
+	// --- Load throws ---
+	const { data: throws, error: throwsError } = await supabase
+		.from("throws")
+		.select("*")
+		.eq("match_id", matchId)
+		.order("set_number", { ascending: true })
+		.order("throw_number", { ascending: true });
 
-        if (throwsError) {
-            console.error(throwsError);
-            showError("Failed to load throws");
-            return;
-        }
+	if (throwsError) {
+		console.error(throwsError);
+		showError("Failed to load throws");
+		return;
+	}
 
-        // Group throws by set_number for easy lookup later
-        const throwsBySet = {};
-        (throws || []).forEach((t) => {
-            if (!throwsBySet[t.set_number]) throwsBySet[t.set_number] = [];
-            throwsBySet[t.set_number].push(t);
-        });
+	// Group throws by set_number for easy lookup later
+	const throwsBySet = {};
+	(throws || []).forEach((t) => {
+		if (!throwsBySet[t.set_number]) throwsBySet[t.set_number] = [];
+		throwsBySet[t.set_number].push(t);
+	});
 
-        const p1Name = match.player1?.name || "Player 1";
-        const p2Name = match.player2?.name || "Player 2";
-        const tournamentName = match.tournament?.name || "Tournament";
+	const p1Name = match.player1?.name || "Player 1";
+	const p2Name = match.player2?.name || "Player 2";
+	const tournamentName = match.tournament?.name || "Tournament";
 
-        // Status pill
-        let pillClass = "scheduled";
-        let pillLabel = "Scheduled";
-        if (match.status === "live") {
-            pillClass = "live";
-            pillLabel = "Live";
-        } else if (match.status === "finished") {
-            pillClass = "finished";
-            pillLabel = "Finished";
-        }
+	// Status pill
+	let pillClass = "scheduled";
+	let pillLabel = "Scheduled";
+	if (match.status === "live") {
+		pillClass = "live";
+		pillLabel = "Live";
+	} else if (match.status === "finished") {
+		pillClass = "finished";
+		pillLabel = "Finished";
+	}
 
-        const overallSets = `${match.final_sets_player1 ?? 0} – ${
-            match.final_sets_player2 ?? 0
-        }`;
+	const overallSets = `${match.final_sets_player1 ?? 0} – ${
+		match.final_sets_player2 ?? 0
+	}`;
 
-        // Determine live set (for header + throwstrip only)
-        let currentSet = null;
-        if (sets && sets.length > 0) {
-            currentSet = sets.find(
-                (s) =>
-                    !s.winner_player_id &&
-                    (s.score_player1 ?? 0) < 50 &&
-                    (s.score_player2 ?? 0) < 50
-            );
-        }
+	// Determine live set (for header + throwstrip only)
+	let currentSet = null;
+	if (sets && sets.length > 0) {
+		currentSet = sets.find(
+			(s) =>
+				!s.winner_player_id &&
+				(s.score_player1 ?? 0) < 50 &&
+				(s.score_player2 ?? 0) < 50
+		);
+	}
 
-        const liveSP1 = currentSet ? currentSet.score_player1 ?? 0 : 0;
-        const liveSP2 = currentSet ? currentSet.score_player2 ?? 0 : 0;
+	const liveSP1 = currentSet ? currentSet.score_player1 ?? 0 : 0;
+	const liveSP2 = currentSet ? currentSet.score_player2 ?? 0 : 0;
 
-        // --- Render header + skeleton for sets ---
-        const html = `
-    <div class="card top-card">
-      <div class="subtitle">${linkToTournament(tournamentId, tournamentName)}</div>
+	// --- Render header + skeleton for sets ---
+	const html = `
+<div class="card top-card">
+  <div class="subtitle">${linkToTournament(tournamentId, tournamentName)}</div>
 
-      <div class="top-score-row">
-		<span style="text-align: right;" class="match-header-player" data-player-id="${match.player1?.id}">
-			${match.player1?.name || "Player 1"}
-		</span>
-        <div class="top-score">${overallSets}</div>
-		<span class="match-header-player" data-player-id="${match.player2?.id}">
-			${match.player2?.name || "Player 2"}
-		</span>
-      </div>
+  <div class="top-score-row">
+	<span style="text-align: right;" class="match-header-player" data-player-id="${match.player1?.id}">
+		${match.player1?.name || "Player 1"}
+	</span>
+	<div class="top-score">${overallSets}</div>
+	<span class="match-header-player" data-player-id="${match.player2?.id}">
+		${match.player2?.name || "Player 2"}
+	</span>
+  </div>
 
-      <div class="live-throwstrip-row">
-        <div class="live-throwstrip p1" id="header-throws-p1"></div>
-        <div class="live-setscore" id="header-live-setscore">${liveSP1} – ${liveSP2}</div>
-        <div class="live-throwstrip p2" id="header-throws-p2"></div>
-      </div>
+  <div class="live-throwstrip-row">
+	<div class="live-throwstrip p1" id="header-throws-p1"></div>
+	<div class="live-setscore" id="header-live-setscore">${liveSP1} – ${liveSP2}</div>
+	<div class="live-throwstrip p2" id="header-throws-p2"></div>
+  </div>
 
-      <div class="match-small" style="text-align:center;">
-        ${formatDate(match.match_date)}
-      </div>
-      <div class="match-small" style="text-align:center;">
-        <span class="pill ${pillClass}">${pillLabel}</span>
-      </div>
-    </div>
+  <div class="match-small" style="text-align:center;">
+	${formatDate(match.match_date)}
+  </div>
+  <div class="match-small" style="text-align:center;">
+	<span class="pill ${pillClass}">${pillLabel}</span>
+  </div>
+</div>
 
-    <div class="card" id="match-detail">
-      <div class="tab-row">
-        <div class="tab active" data-tab="sets">Sets</div>
-      </div>
-      <div id="tab-sets"></div>
-    </div>
-  `;
+<div class="card" id="match-detail">
+  <div class="tab-row">
+	<div class="tab active" data-tab="sets">Sets</div>
+  </div>
+  <div id="tab-sets"></div>
+</div>
+`;
 
-        setContent(html);
+	setContent(html);
 
-        // Keep scoring console in sync
-        if (SUPERADMIN) {
-            resetScoringStateForMatch(match, sets || []);
-        }
+	// Keep scoring console in sync
+	if (SUPERADMIN) {
+		resetScoringStateForMatch(match, sets || []);
+	}
 
-        const setsContainer = document.getElementById("tab-sets");
-        if (!sets || sets.length === 0) {
-            setsContainer.innerHTML =
-                '<div class="empty-message">No sets recorded for this match yet.</div>';
-            return;
-        }
+	const setsContainer = document.getElementById("tab-sets");
+	if (!sets || sets.length === 0) {
+		setsContainer.innerHTML =
+			'<div class="empty-message">No sets recorded for this match yet.</div>';
+		return;
+	}
 
-        // --- Build the sets list with EMPTY expanded panels ---
-        let setsHtml = `<div class="sets-wrapper">`;
-        let cumSetP1 = 0;
-        let cumSetP2 = 0;
+	// --- Build the sets list with EMPTY expanded panels ---
+	let setsHtml = `<div class="sets-wrapper">`;
+	let cumSetP1 = 0;
+	let cumSetP2 = 0;
 
-        sets.forEach((s) => {
-            const setNum = s.set_number;
-            const p1Score = s.score_player1;
-            const p2Score = s.score_player2;
+	sets.forEach((s) => {
+		const setNum = s.set_number;
+		const p1Score = s.score_player1;
+		const p2Score = s.score_player2;
 
-            const p1Win = p1Score === 50 && p2Score < 50;
-            const p2Win = p2Score === 50 && p1Score < 50;
+		const p1Win = p1Score === 50 && p2Score < 50;
+		const p2Win = p2Score === 50 && p1Score < 50;
 
-            if (p1Win) cumSetP1++;
-            if (p2Win) cumSetP2++;
+		if (p1Win) cumSetP1++;
+		if (p2Win) cumSetP2++;
 
-            const cumDisplay = `${cumSetP1}–${cumSetP2}`;
+		const cumDisplay = `${cumSetP1}–${cumSetP2}`;
 
-            setsHtml += `
-      <div class="set-block" data-set="${setNum}">
-        <div class="set-main-row" data-set="${setNum}">
-          <div class="col left ${p1Win ? "winner" : ""}">${p1Score}</div>
-          <div class="col mid">${cumDisplay}</div>
-          <div class="col right ${p2Win ? "winner" : ""}">${p2Score}</div>
-        </div>
-        <div class="set-throws-expanded" data-set="${setNum}" style="display:none;"></div>
-      </div>
-    `;
-        });
+		setsHtml += `
+  <div class="set-block" data-set="${setNum}">
+	<div class="set-main-row" data-set="${setNum}">
+	  <div class="col left ${p1Win ? "winner" : ""}">${p1Score}</div>
+	  <div class="col mid">${cumDisplay}</div>
+	  <div class="col right ${p2Win ? "winner" : ""}">${p2Score}</div>
+	</div>
+	<div class="set-throws-expanded" data-set="${setNum}" style="display:none;"></div>
+  </div>
+`;
+	});
 
-        setsHtml += `</div>`;
-        setsContainer.innerHTML = setsHtml;
+	setsHtml += `</div>`;
+	setsContainer.innerHTML = setsHtml;
 
-        // --- Click handler: lazily build the throws table on expand ---
-        document.querySelectorAll(".set-main-row").forEach((row) => {
-            row.addEventListener("click", () => {
-                const setNum = Number(row.getAttribute("data-set"));
-                const expanded = document.querySelector(
-                    `.set-throws-expanded[data-set="${setNum}"]`
-                );
-                if (!expanded) return;
+	// --- Click handler: lazily build the throws table on expand ---
+	document.querySelectorAll(".set-main-row").forEach((row) => {
+		row.addEventListener("click", () => {
+			const setNum = Number(row.getAttribute("data-set"));
+			const expanded = document.querySelector(
+				`.set-throws-expanded[data-set="${setNum}"]`
+			);
+			if (!expanded) return;
 
-                const isOpen = expanded.style.display === "block";
+			const isOpen = expanded.style.display === "block";
 
-                // Close all others
-                document
-                    .querySelectorAll(".set-throws-expanded")
-                    .forEach((el) => {
-                        el.style.display = "none";
-                    });
+			// Close all others
+			document
+				.querySelectorAll(".set-throws-expanded")
+				.forEach((el) => {
+					el.style.display = "none";
+				});
 
-                if (isOpen) {
-                    // Already open → now closed
-                    expanded.style.display = "none";
-                    return;
-                }
+			if (isOpen) {
+				// Already open → now closed
+				expanded.style.display = "none";
+				return;
+			}
 
-                // Build model from raw throws for THIS set
-                const raw = throwsBySet[setNum] || [];
-                const model = buildThrowsModel(
-                    raw,
-                    match.player1?.id,
-                    match.player2?.id
-                );
+			// Build model from raw throws for THIS set
+			const raw = throwsBySet[setNum] || [];
+			const model = buildThrowsModel(
+				raw,
+				match.player1?.id,
+				match.player2?.id
+			);
 
-                expanded.innerHTML = model.length
-                    ? buildThrowsTableHTML(model, p1Name, p2Name)
-                    : '<div class="empty-message">No throw history for this set.</div>';
+			expanded.innerHTML = model.length
+				? buildThrowsTableHTML(model, p1Name, p2Name)
+				: '<div class="empty-message">No throw history for this set.</div>';
 
-                expanded.style.display = "block";
-            });
-        });
+			expanded.style.display = "block";
+		});
+	});
 
-        // Score button opens scoring console
-        if (scoreBtn) {
-            scoreBtn.onclick = openScoringConsole;
-        }
+	// Score button opens scoring console
+	if (scoreBtn) {
+		scoreBtn.onclick = openScoringConsole;
+	}
 
-        // Ensure header live set score stays in sync
-        const headerSetScoreEl = document.getElementById(
-            "header-live-setscore"
-        );
-        if (headerSetScoreEl) {
-            headerSetScoreEl.textContent = `${liveSP1} – ${liveSP2}`;
-        }
+	// Ensure header live set score stays in sync
+	const headerSetScoreEl = document.getElementById(
+		"header-live-setscore"
+	);
+	if (headerSetScoreEl) {
+		headerSetScoreEl.textContent = `${liveSP1} – ${liveSP2}`;
+	}
 
-        // Only the live set drives the header throwstrip
-        if (currentSet) {
-            updateLiveThrowsForSet(currentSet.set_number);
-        }
-    }
+	// Only the live set drives the header throwstrip
+	if (currentSet) {
+		updateLiveThrowsForSet(currentSet.set_number);
+	}
+}
 
 
 async function loadMatchThrowsUpload(matchId) {
@@ -2410,168 +2410,168 @@ async function loadMatchThrowsUpload(matchId) {
 
 
 async function loadTournaments() {
-        window.currentMatchId = null;
-        window.currentTournamentId = null;
-        window.lastSeenSet = null;
+	window.currentMatchId = null;
+	window.currentTournamentId = null;
+	window.lastSeenSet = null;
 
-        const dateBar = document.getElementById("date-bar");
-        if (dateBar) dateBar.style.display = "flex";
+	const dateBar = document.getElementById("date-bar");
+	if (dateBar) dateBar.style.display = "flex";
 
-        showBackButton(null);
-        updateScoreButtonVisibility(false);
-        setAddFriendlyVisible(false);
+	showBackButton(null);
+	updateScoreButtonVisibility(false);
+	setAddFriendlyVisible(false);
 
-        showLoading("Loading tournaments…");
+	showLoading("Loading tournaments…");
 
-        // Ensure the Friendlies "tournament" row exists
-        await ensureFriendliesTournamentExists();
+	// Ensure the Friendlies "tournament" row exists
+	await ensureFriendliesTournamentExists();
 
-        // Load tournaments + all matches (for the date bar)
-        const [
-            { data: tournamentsData, error: tournamentsError },
-            { data: matchesData, error: matchesError },
-        ] = await Promise.all([
-            supabase
-                .from("tournaments")
-                .select("id, name")
-                .order("name", { ascending: true }),
-            supabase.from("matches").select("id, tournament_id, match_date"),
-        ]);
+	// Load tournaments + all matches (for the date bar)
+	const [
+		{ data: tournamentsData, error: tournamentsError },
+		{ data: matchesData, error: matchesError },
+	] = await Promise.all([
+		supabase
+			.from("tournaments")
+			.select("id, name")
+			.order("name", { ascending: true }),
+		supabase.from("matches").select("id, tournament_id, match_date"),
+	]);
 
-        if (tournamentsError) {
-            console.error(tournamentsError);
-            showError("Failed to load tournaments");
-            return;
-        }
-        if (matchesError) {
-            console.error(matchesError);
-            // We can still render tournaments; the date bar will just have less info
-        }
+	if (tournamentsError) {
+		console.error(tournamentsError);
+		showError("Failed to load tournaments");
+		return;
+	}
+	if (matchesError) {
+		console.error(matchesError);
+		// We can still render tournaments; the date bar will just have less info
+	}
 
-        let tournaments = tournamentsData || [];
-        const matches = matchesData || [];
+	let tournaments = tournamentsData || [];
+	const matches = matchesData || [];
 
-        // Build date → set of tournament IDs (excluding Friendlies),
-        // and collect ALL dates where *any* match exists (including friendlies)
-        const dateToTournamentIds = {};
-        const allDatesSet = new Set();
+	// Build date → set of tournament IDs (excluding Friendlies),
+	// and collect ALL dates where *any* match exists (including friendlies)
+	const dateToTournamentIds = {};
+	const allDatesSet = new Set();
 
-        matches.forEach((m) => {
-            if (!m.match_date) return;
-            const d = isoDateOnly(m.match_date);
-            if (!d) return;
+	matches.forEach((m) => {
+		if (!m.match_date) return;
+		const d = isoDateOnly(m.match_date);
+		if (!d) return;
 
-            // All match dates (for bar)
-            allDatesSet.add(d);
+		// All match dates (for bar)
+		allDatesSet.add(d);
 
-            // Only "real" tournaments drive which cards are shown
-            if (
-                m.tournament_id &&
-                m.tournament_id !== FRIENDLIES_TOURNAMENT_ID
-            ) {
-                if (!dateToTournamentIds[d]) {
-                    dateToTournamentIds[d] = new Set();
-                }
-                dateToTournamentIds[d].add(m.tournament_id);
-            }
-        });
+		// Only "real" tournaments drive which cards are shown
+		if (
+			m.tournament_id &&
+			m.tournament_id !== FRIENDLIES_TOURNAMENT_ID
+		) {
+			if (!dateToTournamentIds[d]) {
+				dateToTournamentIds[d] = new Set();
+			}
+			dateToTournamentIds[d].add(m.tournament_id);
+		}
+	});
 
-        // Remove Friendlies from the sorted list so we can force it last as a special card
-        tournaments = tournaments.filter(
-            (t) => t.id !== FRIENDLIES_TOURNAMENT_ID
-        );
+	// Remove Friendlies from the sorted list so we can force it last as a special card
+	tournaments = tournaments.filter(
+		(t) => t.id !== FRIENDLIES_TOURNAMENT_ID
+	);
 
-        // --- Build HTML for tournaments list (as before) ---
-        let html = '<div class="section-title">Tournaments</div>';
+	// --- Build HTML for tournaments list (as before) ---
+	let html = '<div class="section-title">Tournaments</div>';
 
-        tournaments.forEach((t) => {
-            const name = t.name || "Tournament " + t.id.slice(0, 8);
-            html += `
-      <div class="card clickable" data-tid="${t.id}">
-        <div class="title-row">
-          <div class="title">${name}</div>
-        </div>
-      </div>
-    `;
-        });
+	tournaments.forEach((t) => {
+		const name = t.name || "Tournament " + t.id.slice(0, 8);
+		html += `
+  <div class="card clickable" data-tid="${t.id}">
+	<div class="title-row">
+	  <div class="title">${name}</div>
+	</div>
+  </div>
+`;
+	});
 
-        // Friendlies card always last, always present
-        html += `
-    <div class="card clickable" data-friendlies="true">
-      <div class="title-row">
-        <div class="title">Friendlies</div>
-        <div class="subtitle">Pickup & casual matches</div>
-      </div>
-    </div>
-  `;
+	// Friendlies card always last, always present
+	html += `
+<div class="card clickable" data-friendlies="true">
+  <div class="title-row">
+	<div class="title">Friendlies</div>
+	<div class="subtitle">Pickup & casual matches</div>
+  </div>
+</div>
+`;
 
-        setContent(html);
+	setContent(html);
 
-        // Click handlers for tournament cards
-		document.querySelectorAll("[data-tid]").forEach((el) => {
-		  el.addEventListener("click", () => {
-			const tid = el.getAttribute("data-tid");
-			if (!tid) return;
-			// Home view is "daily-first"
-			window.location.hash = `#/tournament/${tid}/overview?tab=daily`;
-		  });
+	// Click handlers for tournament cards
+	document.querySelectorAll("[data-tid]").forEach((el) => {
+	  el.addEventListener("click", () => {
+		const tid = el.getAttribute("data-tid");
+		if (!tid) return;
+		// Home view is "daily-first"
+		window.location.hash = `#/tournament/${tid}/overview?tab=daily`;
+	  });
+	});
+
+	// Click handler for Friendlies card
+	const friendliesCard = document.querySelector(
+		'[data-friendlies="true"]'
+	);
+	if (friendliesCard) {
+		friendliesCard.addEventListener("click", () => {
+			window.location.hash = "#/friendlies";
 		});
+	}
 
-        // Click handler for Friendlies card
-        const friendliesCard = document.querySelector(
-            '[data-friendlies="true"]'
-        );
-        if (friendliesCard) {
-            friendliesCard.addEventListener("click", () => {
-                window.location.hash = "#/friendlies";
-            });
-        }
+	// --- Date bar for HOME view ---
+	// allDates includes any matches (including Friendlies); tournaments shown are
+	// only those with matches on the selected date. Friendlies card always visible.
+	const allDates = Array.from(allDatesSet).sort();
+	setupHomeDateBar(allDates, dateToTournamentIds);
+}
 
-        // --- Date bar for HOME view ---
-        // allDates includes any matches (including Friendlies); tournaments shown are
-        // only those with matches on the selected date. Friendlies card always visible.
-        const allDates = Array.from(allDatesSet).sort();
-        setupHomeDateBar(allDates, dateToTournamentIds);
-    }
+async function loadTournamentsMenu() {
+	window.currentMatchId = null;
+	window.currentTournamentId = null;
+	window.lastSeenSet = null;
 
-    async function loadTournamentsMenu() {
-        window.currentMatchId = null;
-        window.currentTournamentId = null;
-        window.lastSeenSet = null;
+	const dateBar = document.getElementById("date-bar");
+	if (dateBar) dateBar.style.display = "none";
 
-        const dateBar = document.getElementById("date-bar");
-        if (dateBar) dateBar.style.display = "none";
+	showBackButton(() => {
+		window.location.hash = "#/tournaments";
+	});
 
-        showBackButton(() => {
-            window.location.hash = "#/tournaments";
-        });
+	updateScoreButtonVisibility(false);
+	setAddFriendlyVisible(false);
 
-        updateScoreButtonVisibility(false);
-        setAddFriendlyVisible(false);
+	showLoading("Loading tournaments…");
 
-        showLoading("Loading tournaments…");
+	const { data, error } = await supabase
+		.from("tournaments")
+		.select("id, name, country, type")
+		.neq("id", FRIENDLIES_TOURNAMENT_ID)
+		.order("name", { ascending: true });
 
-        const { data, error } = await supabase
-            .from("tournaments")
-            .select("id, name, country, type")
-            .neq("id", FRIENDLIES_TOURNAMENT_ID)
-            .order("name", { ascending: true });
+	if (error || !data) {
+		showError("Failed to load tournaments");
+		return;
+	}
 
-        if (error || !data) {
-            showError("Failed to load tournaments");
-            return;
-        }
+	// Group by country
+	const countries = {};
+	data.forEach((t) => {
+		const country = t.country || "World";
+		if (!countries[country]) countries[country] = [];
+		countries[country].push(t);
+	});
 
-        // Group by country
-        const countries = {};
-        data.forEach((t) => {
-            const country = t.country || "World";
-            if (!countries[country]) countries[country] = [];
-            countries[country].push(t);
-        });
-
-        renderCountriesView(countries);
-    }
+	renderCountriesView(countries);
+}
 
 // =======================================================
 // 10. SIMPLE HASH ROUTER — keeps view in sync with URL
@@ -2602,17 +2602,17 @@ function handleRoute() {
   }
 
   // #/friendlies    → use the existing tournament-style view for Friendlies
-if (parts[1] === "friendlies" && !parts[2]) {
-    window.tournamentContext.activeOverviewTab = "daily"; // optional
-    loadTournamentOverview(FRIENDLIES_TOURNAMENT_ID);
-    return;
-}
+	if (parts[1] === "friendlies" && !parts[2]) {
+		window.tournamentContext.activeOverviewTab = "daily"; // optional
+		loadTournamentOverview(FRIENDLIES_TOURNAMENT_ID);
+		return;
+	}
 
-  // #/friendlies/new
-  if (parts[1] === "friendlies" && parts[2] === "new") {
-    loadFriendlyCreate();
-    return;
-  }
+	  // #/friendlies/new
+	if (parts[1] === "friendlies" && parts[2] === "new") {
+	loadFriendlyCreate();
+	return;
+	}
 
 	  // #/tournament/<tid>/manage-matches
 	  if (parts[1] === "tournament" && parts[2] && parts[3] === "manage-matches") {
@@ -2620,52 +2620,52 @@ if (parts[1] === "friendlies" && !parts[2]) {
 		return;
 	  }
 
-  // Unified tournament route:
-  // #/tournament/<tid>/overview?tab=<tabName>
-  // or even just #/tournament/<tid>?tab=<tabName>
-  if (parts[1] === "tournament" && parts[2]) {
-    const tid = parts[2];
+	// Unified tournament route:
+	// #/tournament/<tid>/overview?tab=<tabName>
+	// or even just #/tournament/<tid>?tab=<tabName>
+	if (parts[1] === "tournament" && parts[2]) {
+	const tid = parts[2];
 
-    // Read ?tab= from query string (daily, standings, fixtures, results, overview, manage)
-    const tab = params.get("tab");
+	// Read ?tab= from query string (daily, standings, fixtures, results, overview, manage)
+	const tab = params.get("tab");
 
-    if (tab) {
-      window.tournamentContext.activeOverviewTab = tab;
-    } else if (!window.tournamentContext.activeOverviewTab) {
-      // Default if no tab set explicitly: standings
-      window.tournamentContext.activeOverviewTab = "standings";
-    }
-
-    // Always use the OVERVIEW page (which contains all tabs)
-    loadTournamentOverview(tid);
-    return;
+	if (tab) {
+	  window.tournamentContext.activeOverviewTab = tab;
+	} else if (!window.tournamentContext.activeOverviewTab) {
+	  // Default if no tab set explicitly: standings
+	  window.tournamentContext.activeOverviewTab = "standings";
 	}
 
-  // #/tournament/<tid>/match/<mid>/sets  (set entry screen)
-  if (parts[1] === "tournament" && parts[2] && parts[3] === "match" && parts[4] && parts[5] === "sets") {
-    const tournamentId = parts[2];
-    const matchId = parts[4];
-    loadTournamentMatchSets(matchId, tournamentId);
-    return;
-  }
+	// Always use the OVERVIEW page (which contains all tabs)
+	loadTournamentOverview(tid);
+	return;
+}
 
-  // #/match/<mid>/<tid>   (match detail)
-  if (parts[1] === "match" && parts[2] && parts[3]) {
-    loadMatchDetail(parts[2], parts[3]);
-    return;
-  }
-	
-// #/player/<pid>?tab=<tabName>
-if (parts[1] === "player" && parts[2]) {
-    const pid = parts[2];
-    const tab = params.get("tab") || "overview";
-    loadPlayerPage(pid, tab);
-    return;
+	// #/tournament/<tid>/match/<mid>/sets  (set entry screen)
+	if (parts[1] === "tournament" && parts[2] && parts[3] === "match" && parts[4] && parts[5] === "sets") {
+	const tournamentId = parts[2];
+	const matchId = parts[4];
+	loadTournamentMatchSets(matchId, tournamentId);
+	return;
+	}
+
+	// #/match/<mid>/<tid>   (match detail)
+	if (parts[1] === "match" && parts[2] && parts[3]) {
+	loadMatchDetail(parts[2], parts[3]);
+	return;
+	}
+		
+	// #/player/<pid>?tab=<tabName>
+	if (parts[1] === "player" && parts[2]) {
+		const pid = parts[2];
+		const tab = params.get("tab") || "overview";
+		loadPlayerPage(pid, tab);
+		return;
 }
 }
 
-  // Fallback
-  loadTournaments();
+// Fallback
+loadTournaments();
 
 
 // =======================================================
@@ -2681,105 +2681,105 @@ window.addEventListener("hashchange", handleRoute);
 // INITIAL LOAD
 // =======================================================
 
-    // Listen for browser back/forward
-    window.addEventListener("hashchange", handleRoute);
+// Listen for browser back/forward
+window.addEventListener("hashchange", handleRoute);
 
-    function renderCountriesView(countries) {
-        const html = `
-    <div id="tournaments-menu">
-      <div class="section-title">Tournaments</div>
+function renderCountriesView(countries) {
+	const html = `
+<div id="tournaments-menu">
+  <div class="section-title">Tournaments</div>
 
-      <div id="countries-view">
-        ${Object.keys(countries)
-            .sort()
-            .map(
-                (country) => `
-            <div class="card clickable country-card"
-                 data-country="${country}">
-              ${country}
-            </div>
-          `
-            )
-            .join("")}
-      </div>
+  <div id="countries-view">
+	${Object.keys(countries)
+		.sort()
+		.map(
+			(country) => `
+		<div class="card clickable country-card"
+			 data-country="${country}">
+		  ${country}
+		</div>
+	  `
+		)
+		.join("")}
+  </div>
 
-      <div id="country-tournaments-view" style="display:none;"></div>
-    </div>
-  `;
+  <div id="country-tournaments-view" style="display:none;"></div>
+</div>
+`;
 
-        setContent(html);
+	setContent(html);
 
-        document.querySelectorAll(".country-card").forEach((card) => {
-            card.addEventListener("click", () => {
-                const country = card.dataset.country;
-                renderCountryTournaments(
-                    country,
-                    countries[country],
-                    countries
-                );
-            });
-        });
-    }
+	document.querySelectorAll(".country-card").forEach((card) => {
+		card.addEventListener("click", () => {
+			const country = card.dataset.country;
+			renderCountryTournaments(
+				country,
+				countries[country],
+				countries
+			);
+		});
+	});
+}
 
-    function renderCountryTournaments(country, tournaments, allCountries) {
-        const container = document.getElementById("country-tournaments-view");
-        const countriesView = document.getElementById("countries-view");
+function renderCountryTournaments(country, tournaments, allCountries) {
+	const container = document.getElementById("country-tournaments-view");
+	const countriesView = document.getElementById("countries-view");
 
-        if (!container || !countriesView) return;
+	if (!container || !countriesView) return;
 
-        const formal = tournaments
-            .filter((t) => t.type === "formal")
-            .sort((a, b) => a.name.localeCompare(b.name));
+	const formal = tournaments
+		.filter((t) => t.type === "formal")
+		.sort((a, b) => a.name.localeCompare(b.name));
 
-        const casual = tournaments
-            .filter((t) => t.type === "casual")
-            .sort((a, b) => a.name.localeCompare(b.name));
+	const casual = tournaments
+		.filter((t) => t.type === "casual")
+		.sort((a, b) => a.name.localeCompare(b.name));
 
-        countriesView.style.display = "none";
-        container.style.display = "block";
+	countriesView.style.display = "none";
+	container.style.display = "block";
 
-        container.innerHTML = `
-    <div class="menu-back">
-      <button id="back-to-countries" class="text-btn">
-        ← All countries
-      </button>
-    </div>
+	container.innerHTML = `
+<div class="menu-back">
+  <button id="back-to-countries" class="text-btn">
+	← All countries
+  </button>
+</div>
 
-    <div class="section-title">${country}</div>
+<div class="section-title">${country}</div>
 
-    ${
-        formal.length
-            ? `
-      ${formal.map((t) => tournamentCardHTML(t)).join("")}
-    `
-            : ""
-    }
+${
+	formal.length
+		? `
+  ${formal.map((t) => tournamentCardHTML(t)).join("")}
+`
+		: ""
+}
 
-    ${
-        casual.length
-            ? `
-      ${casual.map((t) => tournamentCardHTML(t)).join("")}
-    `
-            : ""
-    }
-  `;
+${
+	casual.length
+		? `
+  ${casual.map((t) => tournamentCardHTML(t)).join("")}
+`
+		: ""
+}
+`;
 
-        document.getElementById("back-to-countries").onclick = () => {
-            container.style.display = "none";
-            countriesView.style.display = "block";
-        };
+	document.getElementById("back-to-countries").onclick = () => {
+		container.style.display = "none";
+		countriesView.style.display = "block";
+	};
 
-        bindTournamentLinks();
-    }
+	bindTournamentLinks();
+}
 
-    function tournamentCardHTML(t) {
-        return `
-    <div class="card clickable tournament-card"
-         data-tid="${t.id}">
-      ${t.name}
-    </div>
-  `;
-    }
+function tournamentCardHTML(t) {
+	return `
+<div class="card clickable tournament-card"
+	 data-tid="${t.id}">
+  ${t.name}
+</div>
+`;
+}
 
 function bindTournamentLinks() {
   document.querySelectorAll(".tournament-card").forEach((card) => {
@@ -2827,112 +2827,118 @@ document.addEventListener("click", (ev) => {
     // LOAD TOURNAMENT OVERVIEW
     // =======================================================
 
-    function renderStandingsTable(matches, sets, container) {
-        if (!container) return;
+function renderStandingsTable(matches, sets, container) {
+	if (!container) return;
 
-        const matchesById = {};
-        matches.forEach((m) => {
-            if (m.id) matchesById[m.id] = m;
-        });
+	const matchesById = {};
+	matches.forEach((m) => {
+		if (m.id) matchesById[m.id] = m;
+	});
 
-        const playerStats = {};
-        function ensurePlayer(id, name) {
-            if (!playerStats[id]) {
-                playerStats[id] = {
-                    id,
-                    name,
-                    played: 0,
-                    setsWon: 0,
-                    setsLost: 0,
-                    smallPoints: 0,
-                };
-            }
-        }
+	const playerStats = {};
+	function ensurePlayer(id, name) {
+		if (!playerStats[id]) {
+			playerStats[id] = {
+				id,
+				name,
+				played: 0,
+				setsWon: 0,
+				setsLost: 0,
+				smallPoints: 0,
+			};
+		}
+	}
 
-        // Played matches
-        matches.forEach((m) => {
-            if (!m.player1?.id || !m.player2?.id) return;
-            if (m.status === "scheduled") return;
+	// Played matches
+	matches.forEach((m) => {
+		if (!m.player1?.id || !m.player2?.id) return;
+		if (m.status === "scheduled") return;
 
-            ensurePlayer(m.player1.id, m.player1.name);
-            ensurePlayer(m.player2.id, m.player2.name);
+		ensurePlayer(m.player1.id, m.player1.name);
+		ensurePlayer(m.player2.id, m.player2.name);
 
-            playerStats[m.player1.id].played += 1;
-            playerStats[m.player2.id].played += 1;
-        });
+		playerStats[m.player1.id].played += 1;
+		playerStats[m.player2.id].played += 1;
+	});
 
-        // Sets → results
-        sets.forEach((s) => {
-            if (!s.match_id || !s.winner_player_id) return;
-            const m = matchesById[s.match_id];
-            if (!m) return;
+	// Sets → results
+	sets.forEach((s) => {
+		if (!s.match_id || !s.winner_player_id) return;
+		const m = matchesById[s.match_id];
+		if (!m) return;
 
-            const p1Id = m.player1.id;
-            const p2Id = m.player2.id;
+		const p1Id = m.player1.id;
+		const p2Id = m.player2.id;
 
-            ensurePlayer(p1Id, m.player1.name);
-            ensurePlayer(p2Id, m.player2.name);
+		ensurePlayer(p1Id, m.player1.name);
+		ensurePlayer(p2Id, m.player2.name);
 
-            const winner = s.winner_player_id;
-            const loser = winner === p1Id ? p2Id : p1Id;
+		const winner = s.winner_player_id;
+		const loser = winner === p1Id ? p2Id : p1Id;
 
-            const winnerScore =
-                winner === p1Id ? s.score_player1 : s.score_player2;
-            const loserScore =
-                winner === p1Id ? s.score_player2 : s.score_player1;
+		const winnerScore =
+			winner === p1Id ? s.score_player1 : s.score_player2;
+		const loserScore =
+			winner === p1Id ? s.score_player2 : s.score_player1;
 
-            playerStats[winner].setsWon += 1;
-            playerStats[loser].setsLost += 1;
+		playerStats[winner].setsWon += 1;
+		playerStats[loser].setsLost += 1;
 
-            playerStats[winner].smallPoints += winnerScore ?? 0;
-            playerStats[loser].smallPoints += loserScore ?? 0;
-        });
+		playerStats[winner].smallPoints += winnerScore ?? 0;
+		playerStats[loser].smallPoints += loserScore ?? 0;
+	});
 
-        const standings = Object.values(playerStats).sort((a, b) => {
-            if (b.setsWon !== a.setsWon) return b.setsWon - a.setsWon;
-            if (b.smallPoints !== a.smallPoints)
-                return b.smallPoints - a.smallPoints;
-            return a.name.localeCompare(b.name);
-        });
+	const standings = Object.values(playerStats).sort((a, b) => {
+		if (b.setsWon !== a.setsWon) return b.setsWon - a.setsWon;
+		if (b.smallPoints !== a.smallPoints)
+			return b.smallPoints - a.smallPoints;
+		return a.name.localeCompare(b.name);
+	});
 
-        if (!standings.length) {
-            container.innerHTML = `<div class="empty-message">No results yet.</div>`;
-            return;
-        }
+	if (!standings.length) {
+		container.innerHTML = `<div class="empty-message">No results yet.</div>`;
+		return;
+	}
 
-        container.innerHTML = `
-    <table class="standings-table">
-      <thead>
-        <tr>
-          <th class="pos" width="2.0em" style="text-align:center;">Pos</th>
-          <th style="text-align:left;">Player</th>
-          <th style="text-align:center;">P</th>
-          <th style="text-align:center;">SW</th>
-          <th style="text-align:center;">SL</th>
-          <th style="text-align:center;">SP</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${standings
-            .map(
-                (p, index) => `
-          <tr data-pos="${index + 1}">
-            <td class="pos" width="2.0em" style="text-align:center;">${
-                index + 1
-            }</td>
-            <td style="text-align:left;">${p.name}</td>
-            <td style="text-align:center;">${p.played}</td>
-            <td style="text-align:center;">${p.setsWon}</td>
-            <td style="text-align:center;">${p.setsLost}</td>
-            <td style="text-align:center;">${p.smallPoints}</td>
-          </tr>
-        `
-            )
-            .join("")}
-      </tbody>
-    </table>
+container.innerHTML = `
+	<table class="standings-table">
+	  <thead>
+		<tr>
+		  <th class="pos" width="2.0em" style="text-align:center;">Pos</th>
+		  <th style="text-align:left;">Player</th>
+		  <th style="text-align:center;">P</th>
+		  <th style="text-align:center;">SW</th>
+		  <th style="text-align:center;">SL</th>
+		  <th style="text-align:center;">SP</th>
+		</tr>
+	  </thead>
+	  <tbody>
+		${standings
+			.map(
+				(p, index) => `
+		  <tr data-pos="${index + 1}">
+			<td class="pos" width="2.0em" style="text-align:center;">${
+				index + 1
+			}</td>
+
+			<td style="text-align:left;">
+				<span class="player-link" data-player-id="${p.id}">
+					${p.name}
+				</span>
+			</td>
+
+			<td style="text-align:center;">${p.played}</td>
+			<td style="text-align:center;">${p.setsWon}</td>
+			<td style="text-align:center;">${p.setsLost}</td>
+			<td style="text-align:center;">${p.smallPoints}</td>
+		  </tr>
+		`
+			)
+			.join("")}
+	  </tbody>
+	</table>
   `;
-    }
+}
 
     // -------------------------------------------------------
     // TOURNAMENTS MENU (MUST BE FUNCTION-DECLARED)
@@ -2989,73 +2995,73 @@ document.addEventListener("click", (ev) => {
     // PLAYER RESOLUTION (shared by Friendlies & Tournaments)
     // =======================================================
 
-    async function resolveOrCreatePlayerByName(
-        name,
-        { allowGuest = true } = {}
-    ) {
-        const clean = (name || "").trim();
-        if (!clean) throw new Error("Player name required.");
+async function resolveOrCreatePlayerByName(
+	name,
+	{ allowGuest = true } = {}
+) {
+	const clean = (name || "").trim();
+	if (!clean) throw new Error("Player name required.");
 
-        // Try exact match first
-        const { data: existing } = await supabase
-            .from("players")
-            .select("id, is_guest")
-            .ilike("name", clean)
-            .maybeSingle();
+	// Try exact match first
+	const { data: existing } = await supabase
+		.from("players")
+		.select("id, is_guest")
+		.ilike("name", clean)
+		.maybeSingle();
 
-        if (existing?.id) {
-            if (!allowGuest && existing.is_guest) {
-                throw new Error("Guest players are not allowed here.");
-            }
-            return existing.id;
-        }
+	if (existing?.id) {
+		if (!allowGuest && existing.is_guest) {
+			throw new Error("Guest players are not allowed here.");
+		}
+		return existing.id;
+	}
 
-        const isGuest = !clean.includes(" ");
+	const isGuest = !clean.includes(" ");
 
-        if (isGuest && !allowGuest) {
-            throw new Error("Guest players are not allowed here.");
-        }
+	if (isGuest && !allowGuest) {
+		throw new Error("Guest players are not allowed here.");
+	}
 
-        const { data, error } = await supabase
-            .from("players")
-            .insert({
-                name: clean,
-                is_guest: isGuest,
-            })
-            .select("id")
-            .maybeSingle();
+	const { data, error } = await supabase
+		.from("players")
+		.insert({
+			name: clean,
+			is_guest: isGuest,
+		})
+		.select("id")
+		.maybeSingle();
 
-        if (error || !data) {
-            throw new Error("Failed to create player.");
-        }
+	if (error || !data) {
+		throw new Error("Failed to create player.");
+	}
 
-        return data.id;
-    }
-	
-	function attachPlayerAutocomplete(inputEl, suggestionsEl, playerSourceFn) {
-	  if (!inputEl || !suggestionsEl) return;
+	return data.id;
+}
 
-	  inputEl.addEventListener("input", () => {
-		const q = inputEl.value.trim().toLowerCase();
-		suggestionsEl.innerHTML = "";
-		if (!q) return;
+function attachPlayerAutocomplete(inputEl, suggestionsEl, playerSourceFn) {
+  if (!inputEl || !suggestionsEl) return;
 
-		const players = playerSourceFn() || [];
-		players
-		  .filter(p => (p.name || "").toLowerCase().includes(q))
-		  .slice(0, 5)
-		  .forEach(p => {
-			const div = document.createElement("div");
-			div.className = "friendly-suggestion-item";
-			div.textContent = p.name;
-			div.onclick = () => {
-			  inputEl.value = p.name;
-			  inputEl.dataset.playerId = p.id;
-			  suggestionsEl.innerHTML = "";
-			};
-			suggestionsEl.appendChild(div);
-      });
+  inputEl.addEventListener("input", () => {
+	const q = inputEl.value.trim().toLowerCase();
+	suggestionsEl.innerHTML = "";
+	if (!q) return;
+
+	const players = playerSourceFn() || [];
+	players
+	  .filter(p => (p.name || "").toLowerCase().includes(q))
+	  .slice(0, 5)
+	  .forEach(p => {
+		const div = document.createElement("div");
+		div.className = "friendly-suggestion-item";
+		div.textContent = p.name;
+		div.onclick = () => {
+		  inputEl.value = p.name;
+		  inputEl.dataset.playerId = p.id;
+		  suggestionsEl.innerHTML = "";
+		};
+		suggestionsEl.appendChild(div);
   });
+});
 }
 
 
@@ -3063,135 +3069,135 @@ document.addEventListener("click", (ev) => {
     // THROWS MODEL (miss, fault, bust logic)
     // =======================================================
 
-    function buildThrowsModel(throws, player1Id, player2Id) {
-        let cumP1 = 0;
-        let cumP2 = 0;
-        const model = [];
+function buildThrowsModel(throws, player1Id, player2Id) {
+	let cumP1 = 0;
+	let cumP2 = 0;
+	const model = [];
 
-        (throws || []).forEach((t) => {
-            const isP1 = t.player_id === player1Id;
-            const raw = t.score ?? 0;
-            const miss = raw === 0;
-            const fault = t.is_fault === true;
+	(throws || []).forEach((t) => {
+		const isP1 = t.player_id === player1Id;
+		const raw = t.score ?? 0;
+		const miss = raw === 0;
+		const fault = t.is_fault === true;
 
-            let before = isP1 ? cumP1 : cumP2;
-            let displayScore = "";
+		let before = isP1 ? cumP1 : cumP2;
+		let displayScore = "";
 
-            if (miss) {
-                if (fault && before >= 37) {
-                    // Fault miss causing reset
-                    displayScore = "X↓";
-                    if (isP1) cumP1 = 25;
-                    else cumP2 = 25;
-                } else {
-                    displayScore = "X"; // normal miss / non-resetting fault
-                }
-            } else {
-                let tentative = before + raw;
-                const bust = tentative > 50;
-                if (bust) {
-                    displayScore = raw + "↓"; // bust → reset to 25
-                    if (isP1) cumP1 = 25;
-                    else cumP2 = 25;
-                } else {
-                    displayScore = String(raw);
-                    if (isP1) cumP1 = tentative;
-                    else cumP2 = tentative;
-                }
-            }
+		if (miss) {
+			if (fault && before >= 37) {
+				// Fault miss causing reset
+				displayScore = "X↓";
+				if (isP1) cumP1 = 25;
+				else cumP2 = 25;
+			} else {
+				displayScore = "X"; // normal miss / non-resetting fault
+			}
+		} else {
+			let tentative = before + raw;
+			const bust = tentative > 50;
+			if (bust) {
+				displayScore = raw + "↓"; // bust → reset to 25
+				if (isP1) cumP1 = 25;
+				else cumP2 = 25;
+			} else {
+				displayScore = String(raw);
+				if (isP1) cumP1 = tentative;
+				else cumP2 = tentative;
+			}
+		}
 
-            model.push({
-                throw_number: t.throw_number,
-                isP1,
-                rawScore: raw,
-                displayScore,
-                cumP1,
-                cumP2,
-            });
-        });
+		model.push({
+			throw_number: t.throw_number,
+			isP1,
+			rawScore: raw,
+			displayScore,
+			cumP1,
+			cumP2,
+		});
+	});
 
-        return model;
-    }
+	return model;
+}
 
-    function throwBoxHTML(raw) {
-        const v = String(raw);
-        let cls = "throw-box";
-        if (v.includes("X")) cls += " miss";
-        else if (v.includes("↓")) cls += " reset";
-        return `<div class="${cls}">${v}</div>`;
-    }
+function throwBoxHTML(raw) {
+	const v = String(raw);
+	let cls = "throw-box";
+	if (v.includes("X")) cls += " miss";
+	else if (v.includes("↓")) cls += " reset";
+	return `<div class="${cls}">${v}</div>`;
+}
 
     // =======================================================
     // REALTIME: SETS → update match detail + match list
     // =======================================================
 
-    const setsChannel = supabase
-        .channel("sets-realtime")
-        .on(
-            "postgres_changes",
-            {
-                event: "*",
-                schema: "public",
-                table: "sets",
-            },
-            async (payload) => {
-                if (!window.currentMatchId || !window.currentTournamentId)
-                    return;
+const setsChannel = supabase
+	.channel("sets-realtime")
+	.on(
+		"postgres_changes",
+		{
+			event: "*",
+			schema: "public",
+			table: "sets",
+		},
+		async (payload) => {
+			if (!window.currentMatchId || !window.currentTournamentId)
+				return;
 
-                const updated = payload.new;
-                if (!updated) return;
-                if (updated.match_id !== window.currentMatchId) return;
+			const updated = payload.new;
+			if (!updated) return;
+			if (updated.match_id !== window.currentMatchId) return;
 
-                smoothUpdateSetRow(updated);
-            }
-        )
-        .subscribe();
+			smoothUpdateSetRow(updated);
+		}
+	)
+	.subscribe();
 
-    const setsChannelMatchList = supabase
-        .channel("sets-realtime-matchlist")
-        .on(
-            "postgres_changes",
-            {
-                event: "*",
-                schema: "public",
-                table: "sets",
-            },
-            (payload) => {
-                const updated = payload.new;
-                if (!updated) return;
+const setsChannelMatchList = supabase
+	.channel("sets-realtime-matchlist")
+	.on(
+		"postgres_changes",
+		{
+			event: "*",
+			schema: "public",
+			table: "sets",
+		},
+		(payload) => {
+			const updated = payload.new;
+			if (!updated) return;
 
-                const matchId = updated.match_id;
-                const p1 = updated.score_player1 ?? "";
-                const p2 = updated.score_player2 ?? "";
+			const matchId = updated.match_id;
+			const p1 = updated.score_player1 ?? "";
+			const p2 = updated.score_player2 ?? "";
 
-                const matchesTab = document.getElementById("tab-matches");
-                if (!matchesTab || matchesTab.offsetParent === null) return;
+			const matchesTab = document.getElementById("tab-matches");
+			if (!matchesTab || matchesTab.offsetParent === null) return;
 
-                const card = document.querySelector(
-                    `.card[data-mid="${matchId}"]`
-                );
-                if (!card) return;
+			const card = document.querySelector(
+				`.card[data-mid="${matchId}"]`
+			);
+			if (!card) return;
 
-                const liveBoxes = card.querySelectorAll(".mc-livebox");
-                if (liveBoxes.length === 2) {
-                    liveBoxes[0].textContent = p1;
-                    liveBoxes[1].textContent = p2;
+			const liveBoxes = card.querySelectorAll(".mc-livebox");
+			if (liveBoxes.length === 2) {
+				liveBoxes[0].textContent = p1;
+				liveBoxes[1].textContent = p2;
 
-                    if (p1 !== "" || p2 !== "") {
-                        liveBoxes[0].classList.add("is-live");
-                        liveBoxes[1].classList.add("is-live");
-                    } else {
-                        liveBoxes[0].classList.remove("is-live");
-                        liveBoxes[1].classList.remove("is-live");
-                    }
-                }
+				if (p1 !== "" || p2 !== "") {
+					liveBoxes[0].classList.add("is-live");
+					liveBoxes[1].classList.add("is-live");
+				} else {
+					liveBoxes[0].classList.remove("is-live");
+					liveBoxes[1].classList.remove("is-live");
+				}
+			}
 
-                if (updated.winner_player_id) {
-                    updateMatchListFinalScore(matchId, card);
-                }
-            }
-        )
-        .subscribe();
+			if (updated.winner_player_id) {
+				updateMatchListFinalScore(matchId, card);
+			}
+		}
+	)
+	.subscribe();
 
     // Smoothly update a single set row + header, without full reload
     async function smoothUpdateSetRow(updatedSet) {
@@ -3266,188 +3272,188 @@ document.addEventListener("click", (ev) => {
         }
     }
 
-    async function updateOverallMatchScore() {
-        if (!window.currentMatchId) return;
+async function updateOverallMatchScore() {
+	if (!window.currentMatchId) return;
 
-        const { data: match, error } = await supabase
-            .from("matches")
-            .select("final_sets_player1, final_sets_player2")
-            .eq("id", window.currentMatchId)
-            .maybeSingle();
+	const { data: match, error } = await supabase
+		.from("matches")
+		.select("final_sets_player1, final_sets_player2")
+		.eq("id", window.currentMatchId)
+		.maybeSingle();
 
-        if (error || !match) return;
+	if (error || !match) return;
 
-        const headerScore = document.querySelector(".top-card .top-score");
-        if (headerScore) {
-            headerScore.textContent =
-                (match.final_sets_player1 ?? 0) +
-                " – " +
-                (match.final_sets_player2 ?? 0);
-        }
-    }
+	const headerScore = document.querySelector(".top-card .top-score");
+	if (headerScore) {
+		headerScore.textContent =
+			(match.final_sets_player1 ?? 0) +
+			" – " +
+			(match.final_sets_player2 ?? 0);
+	}
+}
 
-    async function updateMatchListFinalScore(matchId, card) {
-        const { data: match, error } = await supabase
-            .from("matches")
-            .select("final_sets_player1, final_sets_player2")
-            .eq("id", matchId)
-            .maybeSingle();
+async function updateMatchListFinalScore(matchId, card) {
+	const { data: match, error } = await supabase
+		.from("matches")
+		.select("final_sets_player1, final_sets_player2")
+		.eq("id", matchId)
+		.maybeSingle();
 
-        if (error || !match) return;
+	if (error || !match) return;
 
-        const setCells = card.querySelectorAll(".mc-setscore");
-        if (setCells.length === 2) {
-            setCells[0].textContent = match.final_sets_player1 ?? 0;
-            setCells[1].textContent = match.final_sets_player2 ?? 0;
-        }
-    }
+	const setCells = card.querySelectorAll(".mc-setscore");
+	if (setCells.length === 2) {
+		setCells[0].textContent = match.final_sets_player1 ?? 0;
+		setCells[1].textContent = match.final_sets_player2 ?? 0;
+	}
+}
 
     // =======================================================
     // LIVE THROWS: header throwstrip + expanded table
     // =======================================================
 
-    async function updateLiveThrowsForSet(setNumber) {
-        if (!window.currentMatchId) return;
+async function updateLiveThrowsForSet(setNumber) {
+	if (!window.currentMatchId) return;
 
-        const { data: throws, error } = await supabase
-            .from("throws")
-            .select(
-                "id, match_id, set_number, throw_number, player_id, score, is_fault"
-            )
-            .eq("match_id", window.currentMatchId)
-            .eq("set_number", setNumber)
-            .order("throw_number", { ascending: true });
+	const { data: throws, error } = await supabase
+		.from("throws")
+		.select(
+			"id, match_id, set_number, throw_number, player_id, score, is_fault"
+		)
+		.eq("match_id", window.currentMatchId)
+		.eq("set_number", setNumber)
+		.order("throw_number", { ascending: true });
 
-        if (error || !throws) return;
+	if (error || !throws) return;
 
-        const p1 = window.scoringMatch?.p1Id;
-        const p2 = window.scoringMatch?.p2Id;
-        const model = buildThrowsModel(throws, p1, p2);
+	const p1 = window.scoringMatch?.p1Id;
+	const p2 = window.scoringMatch?.p2Id;
+	const model = buildThrowsModel(throws, p1, p2);
 
-        // Header throwstrip
-        const headerP1 = document.getElementById("header-throws-p1");
-        const headerP2 = document.getElementById("header-throws-p2");
+	// Header throwstrip
+	const headerP1 = document.getElementById("header-throws-p1");
+	const headerP2 = document.getElementById("header-throws-p2");
 
-        if (headerP1 && headerP2) {
-            const lastP1 = model.filter((m) => m.isP1).slice(-6);
-            const lastP2 = model.filter((m) => !m.isP1).slice(-6);
+	if (headerP1 && headerP2) {
+		const lastP1 = model.filter((m) => m.isP1).slice(-6);
+		const lastP2 = model.filter((m) => !m.isP1).slice(-6);
 
-            headerP1.innerHTML = lastP1
-                .map((m) => throwBoxHTML(m.displayScore))
-                .join("");
-            headerP2.innerHTML = lastP2
-                .map((m) => throwBoxHTML(m.displayScore))
-                .join("");
-        }
+		headerP1.innerHTML = lastP1
+			.map((m) => throwBoxHTML(m.displayScore))
+			.join("");
+		headerP2.innerHTML = lastP2
+			.map((m) => throwBoxHTML(m.displayScore))
+			.join("");
+	}
 
-        // Expanded table (if open)
-        const expanded = document.querySelector(
-            `.set-throws-expanded[data-set="${setNumber}"]`
-        );
-        if (expanded && expanded.style.display === "block") {
-            expanded.innerHTML = buildThrowsTableHTML(
-                model,
-                window.scoringMatch?.p1Name || "Player 1",
-                window.scoringMatch?.p2Name || "Player 2"
-            );
-        }
-    }
+	// Expanded table (if open)
+	const expanded = document.querySelector(
+		`.set-throws-expanded[data-set="${setNumber}"]`
+	);
+	if (expanded && expanded.style.display === "block") {
+		expanded.innerHTML = buildThrowsTableHTML(
+			model,
+			window.scoringMatch?.p1Name || "Player 1",
+			window.scoringMatch?.p2Name || "Player 2"
+		);
+	}
+}
 
-    window.updateLiveThrowsForSet = updateLiveThrowsForSet;
+window.updateLiveThrowsForSet = updateLiveThrowsForSet;
 
-    // Realtime channel for throws
-    const throwsChannel = supabase
-        .channel("throws-realtime")
-        .on(
-            "postgres_changes",
-            {
-                event: "INSERT",
-                schema: "public",
-                table: "throws",
-            },
-            async (payload) => {
-                const t = payload.new;
-                if (!t) return;
-                if (t.match_id !== window.currentMatchId) return;
-                updateLiveThrowsForSet(t.set_number);
-            }
-        )
-        .subscribe();
+// Realtime channel for throws
+const throwsChannel = supabase
+	.channel("throws-realtime")
+	.on(
+		"postgres_changes",
+		{
+			event: "INSERT",
+			schema: "public",
+			table: "throws",
+		},
+		async (payload) => {
+			const t = payload.new;
+			if (!t) return;
+			if (t.match_id !== window.currentMatchId) return;
+			updateLiveThrowsForSet(t.set_number);
+		}
+	)
+	.subscribe();
 
     // =======================================================
     // BUILD THROWS TABLE HTML
     // =======================================================
 
-    function buildThrowsTableHTML(model, p1Name, p2Name) {
-        if (!model || model.length === 0) {
-            return '<div class="empty-message">No throw history for this set.</div>';
-        }
+function buildThrowsTableHTML(model, p1Name, p2Name) {
+	if (!model || model.length === 0) {
+		return '<div class="empty-message">No throw history for this set.</div>';
+	}
 
-        const p1Seq = [];
-        const p2Seq = [];
+	const p1Seq = [];
+	const p2Seq = [];
 
-        model.forEach((r) => {
-            if (r.isP1) {
-                p1Seq.push({ score: r.displayScore, total: r.cumP1 });
-            } else {
-                p2Seq.push({ score: r.displayScore, total: r.cumP2 });
-            }
-        });
+	model.forEach((r) => {
+		if (r.isP1) {
+			p1Seq.push({ score: r.displayScore, total: r.cumP1 });
+		} else {
+			p2Seq.push({ score: r.displayScore, total: r.cumP2 });
+		}
+	});
 
-        const rows = [];
-        const maxRows = Math.max(p1Seq.length, p2Seq.length);
+	const rows = [];
+	const maxRows = Math.max(p1Seq.length, p2Seq.length);
 
-        for (let i = 0; i < maxRows; i++) {
-            const p1 = p1Seq[i];
-            const p2 = p2Seq[i];
+	for (let i = 0; i < maxRows; i++) {
+		const p1 = p1Seq[i];
+		const p2 = p2Seq[i];
 
-            const p1ScoreStr = String(p1 ? p1.score ?? "" : "");
-            const p2ScoreStr = String(p2 ? p2.score ?? "" : "");
+		const p1ScoreStr = String(p1 ? p1.score ?? "" : "");
+		const p2ScoreStr = String(p2 ? p2.score ?? "" : "");
 
-            const p1Class = p1
-                ? p1ScoreStr.includes("X")
-                    ? "miss"
-                    : p1ScoreStr.includes("↓")
-                    ? "reset"
-                    : ""
-                : "";
-            const p2Class = p2
-                ? p2ScoreStr.includes("X")
-                    ? "miss"
-                    : p2ScoreStr.includes("↓")
-                    ? "reset"
-                    : ""
-                : "";
+		const p1Class = p1
+			? p1ScoreStr.includes("X")
+				? "miss"
+				: p1ScoreStr.includes("↓")
+				? "reset"
+				: ""
+			: "";
+		const p2Class = p2
+			? p2ScoreStr.includes("X")
+				? "miss"
+				: p2ScoreStr.includes("↓")
+				? "reset"
+				: ""
+			: "";
 
-            const p1Cell = p1
-                ? `<span class="throw-raw ${p1Class}"><sub>${p1ScoreStr}</sub></span>/<span class="throw-total">${p1.total}</span>`
-                : "";
-            const p2Cell = p2
-                ? `<span class="throw-raw ${p2Class}"><sub>${p2ScoreStr}</sub></span>/<span class="throw-total">${p2.total}</span>`
-                : "";
+		const p1Cell = p1
+			? `<span class="throw-raw ${p1Class}"><sub>${p1ScoreStr}</sub></span>/<span class="throw-total">${p1.total}</span>`
+			: "";
+		const p2Cell = p2
+			? `<span class="throw-raw ${p2Class}"><sub>${p2ScoreStr}</sub></span>/<span class="throw-total">${p2.total}</span>`
+			: "";
 
-            rows.push(`
-      <tr>
-        <td>${i + 1}</td>
-        <td>${p1Cell}</td>
-        <td>${p2Cell}</td>
-      </tr>
-    `);
-        }
+		rows.push(`
+  <tr>
+	<td>${i + 1}</td>
+	<td>${p1Cell}</td>
+	<td>${p2Cell}</td>
+  </tr>
+`);
+	}
 
-        return `
-    <table class="throws-table">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>${p1Name}</th>
-          <th>${p2Name}</th>
-        </tr>
-      </thead>
-      <tbody>${rows.join("")}</tbody>
-    </table>
-  `;
-    }
+	return `
+<table class="throws-table">
+  <thead>
+	<tr>
+	  <th>#</th>
+	  <th>${p1Name}</th>
+	  <th>${p2Name}</th>
+	</tr>
+  </thead>
+  <tbody>${rows.join("")}</tbody>
+</table>
+`;
+}
 
     // =======================================================
     // CREATE TOURNAMENT MATCH

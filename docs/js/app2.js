@@ -22,6 +22,8 @@ window.tournamentContext = {
     stageId: null,
     groupId: null,
     activeOverviewTab: "overview",
+	defaultTab: null,
+	manageSubview: null
 };
 
 // =======================================================
@@ -125,7 +127,7 @@ function flagPNG(country) {
 
     // ISO-2 already
     if (/^[a-z]{2}$/.test(cc)) {
-        return `<img class="flag-icon" src="/assets/flags/${cc}.svg">`;
+        return `<img class="flag-icon" src="assets/flags/${cc}.svg">`;
     }
 
     // Name → ISO mapping
@@ -154,6 +156,55 @@ function flagPNG(country) {
 // 4. AUTH, PERMISSIONS & ROLE HELPERS
 // =======================================================
 
+function renderAuthControls() {
+  const container = document.getElementById("auth-controls");
+  if (!container) return;
+
+  container.innerHTML = "";
+
+  if (!window.currentUser) {
+    const btn = document.createElement("button");
+    btn.className = "header-btn small";
+    btn.textContent = "Log in";
+    btn.onclick = openLoginModal;
+    container.appendChild(btn);
+    return;
+  }
+
+  // Logged in
+  const wrapper = document.createElement("div");
+  wrapper.style.display = "flex";
+  wrapper.style.gap = "8px";
+  wrapper.style.alignItems = "center";
+
+  if (window.SUPERADMIN) {
+    const badge = document.createElement("div");
+    badge.className = "pill live";
+    badge.textContent = "Admin";
+    wrapper.appendChild(badge);
+  }
+
+  const logoutBtn = document.createElement("button");
+  logoutBtn.className = "header-btn small secondary";
+  logoutBtn.textContent = "Log out";
+  logoutBtn.onclick = openLogoutConfirmModal;
+
+  wrapper.appendChild(logoutBtn);
+  container.appendChild(wrapper);
+}
+
+
+(async () => {
+  if (typeof initAuth === "function") {
+    await initAuth();
+  } else {
+    console.warn("[auth] initAuth not found");
+  }
+
+  renderAuthControls();   // ← REQUIRED
+})();
+
+
 function isSuperAdmin() {
     return typeof SUPERADMIN !== "undefined" && SUPERADMIN === true;
 }
@@ -176,8 +227,6 @@ function canScoreMatch() {
      typeof window.currentMatchId === "string")
   );
 }
-
-window.SUPERADMIN = isSuperAdmin();
 
 // =======================================================
 // 5. TOURNAMENT PLAYER CACHE & BUILDERS
@@ -360,11 +409,23 @@ function throwBoxHTML(raw) {
 // =======================================================
 
 function bindOverviewTabs() {
-    document.querySelectorAll(".tab-row .tab").forEach(tab => {
-        tab.addEventListener("click", () => {
-            activateTab(tab.dataset.tab);
-        });
+  document.querySelectorAll(".tab-row .tab").forEach(tab => {
+    tab.addEventListener("click", () => {
+      const tabName = tab.dataset.tab;
+      if (!tabName) return;
+
+      // 1. Switch UI ONLY
+      activateTab(tabName);
+
+      // 2. Update URL silently (NO routing)
+      const tid = window.currentTournamentId;
+      history.replaceState(
+        null,
+        "",
+        `#/tournament/${tid}?tab=${tabName}`
+      );
     });
+  });
 }
 
 function renderBottomBar() {
@@ -567,15 +628,6 @@ function updateDailyTabLabel(dateStr) {
 // =======================================================
 // 10. TOURNAMENT CONTEXT & GLOBAL VIEW STATE
 // =======================================================
-
-window.tournamentContext = {
-    tournamentId: null,
-    editionId: null,
-    stageId: null,
-    groupId: null, // reserved for later
-    activeOverviewTab: null,
-    defaultTab: null,
-};
 
 window.currentUser = {
   name: "Guest",
@@ -969,7 +1021,11 @@ async function loadTournamentOverview(tournamentId) {
   window.currentMatchId = null;
   window.currentTournamentId = tournamentId;
   window.tournamentContext.tournamentId = tournamentId;
-
+  // Only clear manageSubview if we are NOT explicitly routing to one
+	if (!window.location.hash.includes("/initialisation")) {
+	  window.tournamentContext.manageSubview = null;
+	}
+  
   showBackButton(() => {
     window.location.hash = "#/tournaments";
   });
@@ -1024,7 +1080,7 @@ async function loadTournamentOverview(tournamentId) {
   // 3) Load stages for the selected edition
   const { data: stages, error: stagesError } = await supabase
     .from("stages")
-    .select("id, name")
+    .select("id, name, edition_id, order_index")
     .eq("edition_id", window.tournamentContext.editionId)
     .order("order_index", { ascending: true });
 	
@@ -1141,19 +1197,39 @@ async function loadTournamentOverview(tournamentId) {
   });
 
   // 7) Render tabs
-  renderTournamentDailyTab(matches);
-  updateDailyTabLabel(window.tournamentContext.selectedDate);
+	renderTournamentDailyTab(matches);
+	updateDailyTabLabel(window.tournamentContext.selectedDate);
 	if (window.tournamentContext.activeOverviewTab === "daily") {
 		setupTournamentDateBar(matches);
 	}
-  renderTournamentFixturesTab(matches);
-  renderTournamentResultsTab(matches);
-  await renderTournamentStandingsTab(tournamentId, matches);
-  renderTournamentOverviewTab(tournament, matches);
+	renderTournamentDailyTab(matches);
+	renderTournamentFixturesTab(matches);
+	renderTournamentResultsTab(matches);
+	await renderTournamentStandingsTab(tournamentId, matches);
+
 	if (canManageTournament(tournament)) {
-	renderTournamentManageTab(tournament, editions, allStages);
+	  renderTournamentManageTab(
+		tournament,
+		editions,
+		allStages,
+		window.tournamentContext.manageSubview
+	  );
 	}
-  bindOverviewTabs();
+
+	// ONLY render Overview when needed
+	if (
+	  !window.tournamentContext.activeOverviewTab ||
+	  window.tournamentContext.activeOverviewTab === "overview"
+	) {
+	  renderTournamentOverviewTab(tournament, matches);
+	}
+
+	bindOverviewTabs();
+
+	// FINAL: activate tab
+	activateTab(
+	  window.tournamentContext.activeOverviewTab || "standings"
+	);
   
   const defaultTab =
   window.tournamentContext.defaultTab ||
@@ -1212,12 +1288,80 @@ async function loadTournamentStructure(tournamentId) {
     </div>
   `);
 
-  renderTournamentStructure(editions || []);
+  renderTournamentStructure(tournamentId);
+}
+
+function resolveAdvancementForPosition(position, totalRows, rules) {
+  if (!Array.isArray(rules) || !rules.length) return null;
+
+  let winnerCount = 0;
+  let runnerUpCount = 0;
+
+  // Pre-read quantities so ranges line up correctly
+  for (const r of rules) {
+    if (r.condition === "winner" || r.condition === "best_placed") {
+      winnerCount = Number(r.quantity || 1);
+    }
+    if (r.condition === "runner_up") {
+      runnerUpCount = Number(r.quantity || 1);
+    }
+  }
+
+  const winnerStart = 1;
+  const winnerEnd = winnerCount;
+
+  const runnerUpStart = winnerEnd + 1;
+  const runnerUpEnd = runnerUpStart + runnerUpCount - 1;
+
+  for (const rule of rules) {
+    switch (rule.condition) {
+      case "winner":
+      case "best_placed":
+        if (position >= winnerStart && position <= winnerEnd) {
+          return rule;
+        }
+        break;
+
+      case "runner_up":
+        if (position >= runnerUpStart && position <= runnerUpEnd) {
+          return rule;
+        }
+        break;
+
+      case "nth_place": {
+        if (!rule.position) break;
+
+        const start = Number(rule.position);
+        const qty = Number(rule.quantity || 1);
+        const end = start + qty - 1;
+
+        if (position >= start && position <= end) {
+          return rule;
+        }
+        break;
+      }
+
+      case "loser": {
+        const qty = Number(rule.quantity || 1);
+        const start = totalRows - qty + 1;
+
+        if (position >= start && position <= totalRows) {
+          return rule;
+        }
+        break;
+      }
+
+      case "all":
+        return rule;
+    }
+  }
+
+  // Explicit "Others" (no advancement)
+  return null;
 }
 
 
-function renderStandingsTable(matches, sets, groups, container) {
-	console.log("STANDINGS MATCH SAMPLE", matches[0]);
+function renderStandingsTable(matches, sets, groups, container, advancementRules = []) {
 	const matchesByGroup = new Map();
 
 	(matches || []).forEach(m => {
@@ -1322,11 +1466,22 @@ function renderStandingsTable(matches, sets, groups, container) {
 				};
 			}
 		}
+		
+		// Seed players from ANY match in the group
+		groupMatches.forEach(m => {
+			if (m.player1?.id) {
+				ensurePlayer(m.player1.id, m.player1.name);
+			}
+			if (m.player2?.id) {
+				ensurePlayer(m.player2.id, m.player2.name);
+			}
+		});
 
-		// Played matches
+		// Played matches (exclude scheduled + structure)
 		groupMatches.forEach((m) => {
 			if (!m.player1?.id || !m.player2?.id) return;
 			if (m.status === "scheduled") return;
+			if (m.status === "structure") return;
 
 			ensurePlayer(m.player1.id, m.player1.name);
 			ensurePlayer(m.player2.id, m.player2.name);
@@ -1341,6 +1496,7 @@ function renderStandingsTable(matches, sets, groups, container) {
 
 			const m = groupMatches.find(x => x.id === s.match_id);
 			if (!m) return;
+			if (m.status === "structure") return;
 
 			const p1Id = m.player1.id;
 			const p2Id = m.player2.id;
@@ -1377,39 +1533,76 @@ function renderStandingsTable(matches, sets, groups, container) {
 			<table class="standings-table">
 			  <thead>
 				<tr>
-				  <th class="pos">Pos</th>
+				  <th style="text-align:center;" class="pos">Pos</th>
 				  <th style="text-align:left;">Player</th>
-				  <th>P</th>
-				  <th>SW</th>
-				  <th>SL</th>
-				  <th>SP</th>
+				  <th style="text-align:center;">P</th>
+				  <th style="text-align:center;">SW</th>
+				  <th style="text-align:center;">SL</th>
+				  <th style="text-align:center;">SP</th>
 				</tr>
 			  </thead>
-			  <tbody>
+				<tbody>
 				${
-					standings.length
-						? standings.map(
-							(p, index) => `
+				  standings.length
+					? standings.map((p, index) => {
+						const position = index + 1;
+						const groupSize = standings.length;
+
+						const advRule = resolveAdvancementForPosition(
+						  position,
+						  groupSize,
+						  advancementRules
+						);
+
+						const advClass = advRule
+						  ? `adv-${advRule.condition} adv-layer-${advRule.layer}`
+						  : "";
+
+						return `
 						  <tr>
-							<td class="pos">${index + 1}</td>
+							<td style="text-align:center;" class="pos-cell ${advClass}">
+							<span class="pos-number">${position}</span>
+							</td>
 							<td style="text-align:left;">
 							  <span class="player-link" data-player-id="${p.id}">
 								${p.name}
 							  </span>
 							</td>
-							<td>${p.played}</td>
-							<td>${p.setsWon}</td>
-							<td>${p.setsLost}</td>
-							<td>${p.smallPoints}</td>
+							<td style="text-align:center;">${p.played}</td>
+							<td style="text-align:center;">${p.setsWon}</td>
+							<td style="text-align:center;">${p.setsLost}</td>
+							<td style="text-align:center;">${p.smallPoints}</td>
 						  </tr>
-						`
-						).join("")
-						: `<tr><td colspan="6" class="empty-message">No matches yet</td></tr>`
+						`;
+					  }).join("")
+					: `<tr><td colspan="6" class="empty-message">No matches yet</td></tr>`
 				}
-			  </tbody>
+				</tbody>
 			</table>
 		`
 		);
+		if (advancementRules.length) {
+		  const notes = advancementRules
+			.map(r => {
+			  if (!r.description) return null;
+
+			  return `
+			  <div class="pos-cell adv-note adv-${r.condition} adv-layer-${r.layer}">
+				${r.description}
+			  </div>
+			  `;
+			})
+			.filter(Boolean)
+			.join("");
+
+		  if (notes) {
+			const notesEl = document.createElement("div");
+			notesEl.className = "adv-notes";
+			notesEl.innerHTML = notes;
+			container.appendChild(notesEl);
+		  }
+		}
+
 	});
 }
 
@@ -1658,7 +1851,40 @@ async function renderTournamentStandingsTab(tournamentId, matches) {
 	  }
 	}
 
-    renderStandingsTable(matches, sets || [], groups || [], el);
+	// ------------------------------------
+	// Load advancement rules for this stage
+	// ------------------------------------
+	let advancementRules = [];
+
+	if (stageId) {
+	  const { data: rulesData, error: rulesError } = await supabase
+		.from("advancement_rules")
+		.select(`
+		  id,
+		  condition,
+		  position,
+		  quantity,
+		  layer,
+		  target_stage_id,
+		  description
+		`)
+		.eq("source_stage_id", stageId)
+		.order("layer", { ascending: true });
+
+	  if (rulesError) {
+		console.error(rulesError);
+	  } else {
+		advancementRules = rulesData || [];
+	  }
+	}
+
+	renderStandingsTable(
+	  matches,
+	  sets || [],
+	  groups || [],
+	  el,
+	  advancementRules
+	);
 }
 
 // -----------------------
@@ -1702,71 +1928,76 @@ function renderTournamentOverviewTab(tournament, matches) {
 // 13. TOURNAMENT MANAGE TAB (UI RENDERERS)
 // =======================================================
 
-function renderTournamentManageTab(tournament, editions, allStages) {
-	console.log("[MANAGE TAB] renderTournamentManageTab called");
+function renderTournamentManageTab(
+  tournament,
+  editions,
+  allStages
+) {
   const el = document.getElementById("tab-manage");
   if (!el) return;
 
-  el.innerHTML = `
-    <div class="manage-grid">
-	
+	el.innerHTML = `
+	  <div class="manage-grid">
+
+		<div class="card manage-card clickable" id="manage-init-card">
+		  <div class="manage-title">Group initialisation</div>
+		  <div class="manage-desc">
+			Add players to groups without creating fixtures. Groups remain empty until explicitly initialised.
+		  </div>
+		  <div class="manage-actions">
+			<button class="header-btn small" type="button">
+			  Open initialisation
+			</button>
+		  </div>
+		</div>
+
 		<div class="card manage-card clickable" id="manage-structure-card">
 		  <div class="manage-title">Structure</div>
 		  <div class="manage-desc">
 			Editions, stages, groups and advancement rules.
 		  </div>
 		  <div class="manage-actions">
-			<button class="header-btn small">
+			<button class="header-btn small" type="button">
 			  Open structure manager
 			</button>
 		  </div>
 		</div>
 
+		<div class="card manage-card clickable" id="manage-matches-card">
+		  <div class="manage-title">Matches</div>
+		  <div class="manage-desc">
+			Add and manage matches for this edition & stage.
+		  </div>
+		  <div class="manage-actions">
+			<button class="header-btn small" type="button">
+			  Open match manager
+			</button>
+		  </div>
+		</div>
 
-      <div class="card manage-card">
-        <div class="manage-title">Editions & stages</div>
-        <div class="manage-desc">
-          Create and organise editions and competition stages.
-        </div>
+		<!-- SINGLE, correct subview container -->
+		<div id="manage-subview" style="grid-column: 1 / -1;"></div>
 
-        <div class="manage-actions">
-          <button class="header-btn small" id="add-edition-btn">
-            + Add edition
-          </button>
+	  </div>
+	`;
 
-          <button class="header-btn small" id="add-stage-btn">
-            + Add stage
-          </button>
-        </div>
-
-        <div id="manage-editions-stages-content">
-          ${renderEditionsStagesList(editions, allStages)}
-        </div>
-      </div>
-
-      <div class="card manage-card clickable" id="manage-matches-card">
-        <div class="manage-title">Matches</div>
-        <div class="manage-desc">
-          Add and manage matches for this edition & stage.
-        </div>
-        <div class="manage-actions">
-          <button class="header-btn small">
-            Open match manager
-          </button>
-        </div>
-      </div>
-
-    </div>
-  `;
 
 	// Wire stage reorder buttons
 	el.querySelectorAll("[data-action]").forEach((btn) => {
-		btn.addEventListener("click", (e) => {
-		  e.stopPropagation();
-		  reorderStage(btn.dataset.stage, btn.dataset.action);
-		});
+	  btn.addEventListener("click", (e) => {
+		e.stopPropagation();
+		reorderStage(btn.dataset.stage, btn.dataset.action);
+	  });
 	});
-  
+
+	// Group initialisation card
+	const initCard = el.querySelector("#manage-init-card");
+	if (initCard) {
+	  initCard.addEventListener("click", () => {
+		window.location.hash = `#/tournament/${tournament.id}/initialisation`;
+	  });
+	}
+
 	// Add edition
 	const addEditionBtn = el.querySelector("#add-edition-btn");
 	if (addEditionBtn) {
@@ -1776,7 +2007,7 @@ function renderTournamentManageTab(tournament, editions, allStages) {
 		createEditionPrompt(tournament.id);
 	  });
 	}
-	
+
 	// Add stage
 	const addStageBtn = el.querySelector("#add-stage-btn");
 	if (addStageBtn) {
@@ -1791,19 +2022,55 @@ function renderTournamentManageTab(tournament, editions, allStages) {
 	const matchesCard = el.querySelector("#manage-matches-card");
 	if (matchesCard) {
 	  matchesCard.addEventListener("click", () => {
-		window.location.hash =
-		  `#/tournament/${tournament.id}/manage-matches`;
+		window.location.hash = `#/tournament/${tournament.id}/manage-matches`;
 	  });
 	}
-	
+
 	// Open structure manager
 	const structureCard = el.querySelector("#manage-structure-card");
 	if (structureCard) {
 	  structureCard.addEventListener("click", () => {
-		window.location.hash =
-		  `#/tournament/${tournament.id}/structure`;
+		window.location.hash = `#/tournament/${tournament.id}/structure`;
 	  });
 	}
+
+	// Render manage subview
+	const subviewEl = el.querySelector("#manage-subview");
+	if (!subviewEl) return;
+
+	subviewEl.innerHTML = "";
+	
+	console.log(
+	  "MANAGE SUBVIEW CHECK",
+	  window.tournamentContext.manageSubview,
+	  subviewEl
+	);
+
+	if (window.tournamentContext.manageSubview === "initialisation") {
+	  renderTournamentInitialisation({
+		tournament,
+		editionId: window.tournamentContext.editionId,
+		stageId: window.tournamentContext.stageId,
+		container: subviewEl
+	  });
+	}
+}
+
+async function loadTournamentInitialisation(tournamentId) {
+  const app = document.getElementById("content");
+  if (!app) return;
+
+  app.innerHTML = `
+    <div class="card">
+      <div class="title">Group initialisation</div>
+      <div class="subtitle">
+        Add players to groups before uploading fixtures.
+      </div>
+    </div>
+  `;
+
+  // later:
+  // renderGroupInitialisationTool(...)
 }
 
 function renderEditionsStagesList(editions, stages) {
@@ -1870,7 +2137,41 @@ async function renderTournamentStructure(tournamentId) {
 	  .from("stages")
 	  .select("id,name,stage_type,edition_id,order_index")
 	  .order("order_index");
+	  window.currentStages = stages || [];
 	  
+	const { data: advancementRules, error: arError } = await supabase
+	  .from("advancement_rules")
+	  .select(`
+		id,
+		source_stage_id,
+		source_group_id,
+		condition,
+		position,
+		quantity,
+		layer,
+		target_stage_id,
+		target_group_id,
+		description
+	  `)
+	  .in(
+		"source_stage_id",
+		(stages || []).map(s => s.id)
+	  )
+	  .order("layer", { ascending: true });
+
+	if (arError) {
+	  console.error(arError);
+	}
+	
+	const rulesByStage = new Map();
+
+	(advancementRules || []).forEach(r => {
+	  if (!rulesByStage.has(r.source_stage_id)) {
+		rulesByStage.set(r.source_stage_id, []);
+	  }
+	  rulesByStage.get(r.source_stage_id).push(r);
+	});
+		  
 	const { data: groups, error: groupsError } = await supabase
 	  .from("groups")
 	  .select("id, name, stage_id")
@@ -1922,18 +2223,29 @@ if (groupsError) {
 
     <div id="structure-stages">
       ${
-        editionStages.length
-          ? editionStages
-		  .map(stage => renderStageCard(stage, groups || []))
-		  .join("")
+		editionStages.length
+		  ? editionStages
+			  .map(stage =>
+				renderStageCard(
+				  stage,
+				  groups || [],
+				  rulesByStage.get(stage.id) || []
+				)
+			  )
+			  .join("")
           : `<div class="empty-message">No stages yet.</div>`
       }
     </div>
 
     <div class="card">
-      <button class="header-btn small" id="structure-add-stage">
-        + Add stage
-      </button>
+      <div class="card">
+		  <button
+			class="header-btn small"
+			onclick="openAddStageModal('${currentEditionId}')"
+		  >
+			+ Add stage
+		  </button>
+	</div>
     </div>
   `;
 
@@ -1943,8 +2255,722 @@ wireStructureAddStage(currentEditionId);
 wireStructureGroupButtons();
 wireStructureStageAccordions();
 wireStructureGroupAddButtons();
+
+	// Advancement rules buttons
+	document
+	  .querySelectorAll("[data-advancement-stage]")
+	  .forEach(btn => {
+		btn.addEventListener("click", () => {
+		  const stageId = btn.dataset.advancementStage;
+
+		  window.location.hash =
+			`#/tournament/${window.currentTournamentId}/structure/advancement/${stageId}`;
+		});
+	  });
+	  
+	document
+	  .querySelectorAll("[data-add-groups-stage]")
+	  .forEach(btn => {
+		btn.addEventListener("click", () => {
+		  openAddGroupsOverlay(btn.dataset.addGroupsStage);
+		});
+	  });
 }
 
+async function loadStageAdvancementRules(tournamentId, stageId) {
+  // --- Rehydrate minimal tournament context on refresh ---
+  window.currentTournamentId = tournamentId;
+  window.tournamentContext = window.tournamentContext || {};
+  window.tournamentContext.stageId = stageId;
+
+  // 1) Ensure we know the edition for this stage
+  if (!window.tournamentContext.editionId) {
+    const { data: stage, error: sErr } = await supabase
+      .from("stages")
+      .select("id, edition_id")
+      .eq("id", stageId)
+      .maybeSingle();
+
+    if (sErr || !stage?.edition_id) {
+      console.error("[advancement] failed to rehydrate stage/edition", sErr, stage);
+      showError("Failed to load stage context for advancement rules.");
+      return;
+    }
+
+    window.tournamentContext.editionId = stage.edition_id;
+  }
+
+  // 2) Ensure we have stages for this edition (used by the dropdown)
+  const edId = window.tournamentContext.editionId;
+
+  const { data: stages, error: stErr } = await supabase
+    .from("stages")
+    .select("id, name, stage_type, edition_id, order_index")
+    .eq("edition_id", edId)
+    .order("order_index");
+
+  if (stErr) {
+    console.error("[advancement] failed to load stages list", stErr);
+    showError("Failed to load stages for advancement rules.");
+    return;
+  }
+
+  window.currentStages = stages || [];
+
+  showBackButton(() => {
+    window.location.hash = `#/tournament/${tournamentId}/structure`;
+  });
+
+  updateScoreButtonVisibility(false);
+  setAddFriendlyVisible(false);
+
+  showLoading("Loading advancement rules…");
+
+  const { data: stage, error: stageErr } = await supabase
+    .from("stages")
+    .select("id,name,stage_type")
+    .eq("id", stageId)
+    .maybeSingle();
+	
+	// ----------------------------------------
+	// LOAD *ALL* STAGES FOR TARGET SELECTION
+	// ----------------------------------------
+	const { data: allStages, error: allStagesErr } = await supabase
+	  .from("stages")
+	  .select("id,name,edition_id,order_index");
+
+	if (allStagesErr) {
+	  console.error(allStagesErr);
+	} else {
+	  window.currentStages = allStages || [];
+	}
+
+  if (stageErr || !stage) {
+    console.error(stageErr);
+    showError("Failed to load stage.");
+    return;
+  }
+
+  const { data: rules, error: rulesErr } = await supabase
+    .from("advancement_rules")
+    .select(`
+      id,
+      source_group_id,
+      condition,
+      position,
+      quantity,
+      layer,
+      target_stage_id,
+      target_group_id,
+	  description
+    `)
+    .eq("source_stage_id", stageId)
+    .order("layer", { ascending: true });
+
+  if (rulesErr) {
+    console.error(rulesErr);
+    showError("Failed to load advancement rules.");
+    return;
+  }
+
+  setContent(`
+    <div class="card">
+      <div class="tournament-header">
+        <div class="tournament-name">${stage.name}</div>
+        <div class="subtitle">Advancement rules</div>
+      </div>
+
+      <div id="advancement-rules-content"></div>
+    </div>
+  `);
+
+  renderAdvancementRulesList(stage, rules || []);
+  window.tournamentContext.stageId = stageId;
+}
+
+function renderAdvancementRulesList(stage, rules) {
+  const el = document.getElementById("advancement-rules-content");
+  if (!el) return;
+
+if (!rules.length) {
+  el.innerHTML = `
+    <div class="empty-message">
+      No advancement rules defined for this stage.
+    </div>
+
+    <button
+      class="header-btn small secondary"
+      id="add-adv-rule-btn"
+    >
+      + Add advancement rule
+    </button>
+  `;
+} else {
+  el.innerHTML = `
+    <table class="simple-table">
+      <thead>
+        <tr>
+          <th>Condition</th>
+          <th>Qty</th>
+          <th>Layer</th>
+          <th>Target</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rules.map(r => `
+          <tr>
+            <td>
+              ${r.condition}
+              ${r.position ? `(position ${r.position})` : ""}
+            </td>
+            <td>${r.quantity ?? "–"}</td>
+            <td>${r.layer}</td>
+            <td>
+			  ${r.description || (r.target_stage_id ? "Advances" : "Eliminated")}
+			</td>
+            <td style="white-space:nowrap;">
+			  <span
+				class="
+				  adv-indicator
+				  adv-${r.condition}
+				  adv-layer-${r.layer}
+				"
+				title="${r.condition.replace('_', ' ')} (layer ${r.layer})"
+			  ></span>
+
+			  <button
+				class="icon-btn edit-adv-rule"
+				data-rule-id="${r.id}"
+				title="Edit rule"
+			  >✏️</button>
+
+			  <button
+				class="icon-btn delete-adv-rule"
+				data-rule-id="${r.id}"
+				title="Delete rule"
+			  >✕</button>
+			</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+
+    <button
+      class="header-btn small secondary"
+      id="add-adv-rule-btn"
+    >
+      + Add advancement rule
+    </button>
+  `;
+}
+
+	// Edit rule
+	el.querySelectorAll(".edit-adv-rule").forEach(btn => {
+	  btn.addEventListener("click", () => {
+		const ruleId = btn.dataset.ruleId;
+		openAdvancementRuleModal(stage.id, ruleId);
+	  });
+	});
+
+	// Delete rule
+	el.querySelectorAll(".delete-adv-rule").forEach(btn => {
+	  btn.addEventListener("click", async () => {
+		const ruleId = btn.dataset.ruleId;
+
+		if (!confirm("Delete this advancement rule?")) return;
+
+		const { error } = await supabase
+		  .from("advancement_rules")
+		  .delete()
+		  .eq("id", ruleId);
+
+		if (error) {
+		  console.error(error);
+		  alert("Failed to delete rule.");
+		  return;
+		}
+
+		loadStageAdvancementRules(
+		  window.currentTournamentId,
+		  stage.id
+		);
+	  });
+	});
+
+  
+  const addBtn = document.getElementById("add-adv-rule-btn");
+	if (addBtn) {
+	  addBtn.addEventListener("click", () => {
+		openAdvancementRuleModal(stage.id);
+	  });
+	}
+}
+
+function openAddStageModal() {
+  const modal = document.createElement("div");
+  modal.className = "modal-overlay";
+
+  modal.innerHTML = `
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">Add stage</div>
+        <button class="icon-btn modal-close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <label>
+          Stage name
+          <input type="text" id="stage-name" />
+        </label>
+
+        <label>
+          Stage type
+          <select id="stage-type">
+            <option value="group">Group</option>
+            <option value="knockout">Knockout</option>
+          </select>
+        </label>
+
+        <label>
+          Stage order
+          <input
+            type="number"
+            id="stage-order"
+            min="1"
+            step="1"
+            placeholder="1 = first stage"
+          />
+        </label>
+      </div>
+
+      <div class="modal-actions">
+        <button class="header-btn secondary modal-cancel">Cancel</button>
+        <button class="header-btn" id="stage-save-btn">Add stage</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(modal);
+
+  modal.querySelector(".modal-close").onclick =
+  modal.querySelector(".modal-cancel").onclick =
+    () => modal.remove();
+
+  modal.querySelector("#stage-save-btn").onclick = async () => {
+    const name = modal.querySelector("#stage-name").value.trim();
+    const type = modal.querySelector("#stage-type").value;
+    const order = Number(modal.querySelector("#stage-order").value);
+
+    if (!name || !type || !Number.isInteger(order) || order < 1) {
+      alert("Name, type and a valid stage order are required.");
+      return;
+    }
+
+    const editionId = window.tournamentContext.editionId;
+    if (!editionId) {
+      alert("No edition selected.");
+      return;
+    }
+
+    const { error } = await supabase.from("stages").insert({
+      edition_id: editionId,
+      name,
+      stage_type: type,
+      order_index: order
+    });
+
+    if (error) {
+      console.error(error);
+      alert("Failed to add stage.");
+      return;
+    }
+
+    modal.remove();
+    window.tournamentContext.stageId = null;
+    loadTournamentOverview(window.currentTournamentId);
+  };
+}
+
+
+function openAdvancementRuleModal(stageId, ruleId = null) {
+	console.log("[adv modal] opened for stage", stageId);
+  const modal = document.createElement("div");
+  modal.className = "modal-overlay";
+
+  modal.innerHTML = `
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title">Add advancement rule</div>
+        <button class="icon-btn modal-close">✕</button>
+      </div>
+
+      <div class="modal-body">
+        <label>
+          Condition
+          <select id="adv-condition">
+            <option value="winner">Winner</option>
+            <option value="runner_up">Runner-up</option>
+            <option value="nth_place">Nth place</option>
+            <option value="best_placed">Best placed</option>
+            <option value="loser">Loser</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+
+        <label>
+          Position (only for nth_place)
+          <input type="number" id="adv-position" min="1" />
+        </label>
+
+        <label>
+          Quantity
+          <input type="number" id="adv-quantity" min="1" />
+        </label>
+
+        <label>
+          Layer
+          <input type="number" id="adv-layer" min="1" value="1" />
+        </label>
+		
+		<label>
+		  Advances to
+		  <select id="adv-target-type">
+			<option value="">Eliminated</option>
+			<option value="stage">Another stage</option>
+		  </select>
+		</label>
+
+        <label id="adv-target-stage-row" style="display:none;">
+		  Target stage
+		  <select id="adv-target-stage"></select>
+		</label>
+		
+		<label id="adv-target-group-row" style="display:none;">
+		  Target group / round
+		  <select id="adv-target-group"></select>
+		</label>
+		
+		<label>
+		  Description
+		  <input
+			type="text"
+			id="adv-description"
+			placeholder=""
+		  />
+		</label>
+      </div>
+
+      <div class="modal-actions">
+        <button class="header-btn secondary modal-cancel">Cancel</button>
+        <button class="header-btn" id="adv-save-btn">Save rule</button>
+      </div>
+    </div>
+  `;
+  
+  // EDIT MODE: load existing rule
+	if (ruleId) {
+	  supabase
+		.from("advancement_rules")
+		.select("*")
+		.eq("id", ruleId)
+		.maybeSingle()
+		.then(({ data }) => {
+		  if (!data) return;
+
+		  modal.querySelector("#adv-condition").value = data.condition;
+		  modal.querySelector("#adv-position").value = data.position ?? "";
+		  modal.querySelector("#adv-quantity").value = data.quantity ?? "";
+		  modal.querySelector("#adv-layer").value = data.layer;
+		  modal.querySelector("#adv-target-stage").value =
+			data.target_stage_id ?? "";
+			if (data.target_stage_id) {
+			  modal.querySelector("#adv-target-type").value = "stage";
+			  modal.querySelector("#adv-target-stage-row").style.display = "block";
+			}
+			if (data.target_group_id) {
+			  modal.querySelector("#adv-target-group-row").style.display = "block";
+			  modal.querySelector("#adv-target-group").value =
+				data.target_group_id;
+			}
+		  modal.querySelector("#adv-description").value = data.description ?? "";
+		});
+	}
+
+
+  document.body.appendChild(modal);
+  console.log(
+  "[adv modal] context",
+  window.tournamentContext
+);
+  
+	// ---------------------------------------
+	// Load stages for target selection
+	// ---------------------------------------
+(async () => {
+  console.log("[adv modal] loading stages…");
+
+  const { data: stages, error } = await supabase
+    .from("stages")
+    .select("id,name,edition_id,order_index")
+    .eq("edition_id", window.tournamentContext.editionId)
+    .order("order_index");
+
+  console.log("[adv modal] stages result", { stages, error });
+
+  if (error) {
+    console.error(error);
+    return;
+  }
+
+  if (!stages || !stages.length) {
+    console.warn("[adv modal] NO STAGES RETURNED");
+    return;
+  }
+
+  const currentStage = stages.find(s => s.id === stageId);
+  console.log("[adv modal] current stage", currentStage);
+
+  const eligibleStages = stages.filter(
+    s => currentStage && s.order_index > currentStage.order_index
+  );
+
+  console.log("[adv modal] eligible stages", eligibleStages);
+
+  const stageSelect = modal.querySelector("#adv-target-stage");
+
+  stageSelect.innerHTML =
+    `<option value="">Select stage…</option>` +
+    eligibleStages
+      .map(s => `<option value="${s.id}">${s.name}</option>`)
+      .join("");
+})();
+  
+	// ---------------------------------------
+	// Populate eligible target stages
+	// ---------------------------------------
+
+	const currentStage = window.currentStages?.find(
+	  s => s.id === stageId
+	);
+
+	const targetStageSelect =
+	  modal.querySelector("#adv-target-stage");
+
+	if (currentStage && window.currentStages) {
+	  const eligibleStages = window.currentStages.filter(
+		s =>
+		  s.edition_id === currentStage.edition_id &&
+		  s.order_index > currentStage.order_index
+	  );
+
+	  targetStageSelect.innerHTML =
+		`<option value="">Select stage…</option>` +
+		eligibleStages
+		  .map(
+			s => `<option value="${s.id}">${s.name}</option>`
+		  )
+		  .join("");
+	}
+	
+	// ---------------------------------------
+	// Target type toggle (Eliminated vs Stage)
+	// ---------------------------------------
+
+	const targetTypeEl =
+	modal.querySelector("#adv-target-type");
+
+	const targetStageRow =
+	modal.querySelector("#adv-target-stage-row");
+
+	const targetGroupRow =
+	modal.querySelector("#adv-target-group-row");
+
+	targetTypeEl.addEventListener("change", e => {
+	const isStage = e.target.value === "stage";
+
+	targetStageRow.style.display = isStage ? "block" : "none";
+	targetGroupRow.style.display = "none";
+
+	if (!isStage) {
+	modal.querySelector("#adv-target-stage").value = "";
+	modal.querySelector("#adv-target-group").innerHTML = "";
+	}
+	});
+
+	// ---------------------------------------
+	// Load groups when target stage changes
+	// ---------------------------------------
+
+	modal
+	  .querySelector("#adv-target-stage")
+	  .addEventListener("change", async e => {
+		const targetStageId = e.target.value;
+		const groupSelect =
+		  modal.querySelector("#adv-target-group");
+
+		targetGroupRow.style.display = "none";
+		groupSelect.innerHTML = "";
+
+		if (!targetStageId) return;
+
+		const { data: groups, error } = await supabase
+		  .from("groups")
+		  .select("id,name")
+		  .eq("stage_id", targetStageId)
+		  .order("name");
+
+		if (error) {
+		  console.error(error);
+		  return;
+		}
+
+		if (groups && groups.length) {
+		  groupSelect.innerHTML =
+			`<option value="">Any group</option>` +
+			groups
+			  .map(
+				g =>
+				  `<option value="${g.id}">${g.name}</option>`
+			  )
+			  .join("");
+
+		  targetGroupRow.style.display = "block";
+		}
+	  });
+  
+	const conditionEl = modal.querySelector("#adv-condition");
+	const quantityEl  = modal.querySelector("#adv-quantity");
+	const targetEl    = modal.querySelector("#adv-target-stage");
+	const descEl      = modal.querySelector("#adv-description");
+
+	function updateDescriptionPlaceholder() {
+	  const condition = conditionEl.value;
+	  const qty = quantityEl.value;
+	  const target = targetEl.value;
+
+	  let text = "";
+
+	  switch (condition) {
+		case "winner":
+		  text = "Winner";
+		  break;
+		case "runner_up":
+		  text = "Runner-up";
+		  break;
+		case "loser":
+		  text = "Loser";
+		  break;
+		case "nth_place":
+		  text = "Nth place";
+		  break;
+		case "best_placed":
+		  text = qty ? `Best ${qty}` : "Best placed";
+		  break;
+		case "all":
+		  text = "All players";
+		  break;
+		default:
+		  text = "Qualified players";
+	  }
+
+	  if (target) {
+		text += " advance";
+	  } else {
+		text += " eliminated";
+	  }
+
+	  descEl.placeholder = text;
+	}
+
+	// Wire updates
+	[conditionEl, quantityEl, targetEl].forEach(el =>
+	  el.addEventListener("change", updateDescriptionPlaceholder)
+	);
+
+	// Initial run
+	updateDescriptionPlaceholder();
+
+	  modal.querySelector(".modal-close")?.addEventListener("click", () => modal.remove());
+	  modal.querySelector(".modal-cancel")?.addEventListener("click", () => modal.remove());
+	  
+	if (ruleId) {
+	  modal.querySelector(".modal-title").textContent =
+		"Edit advancement rule";
+	}
+
+	  wireAdvancementRuleSave(stageId, modal);
+}
+
+function wireAdvancementRuleSave(stageId, modal) {
+  const saveBtn = modal.querySelector("#adv-save-btn");
+
+  saveBtn.addEventListener("click", async () => {
+    const condition = modal.querySelector("#adv-condition").value;
+    const position  = modal.querySelector("#adv-position").value || null;
+    const quantity  = modal.querySelector("#adv-quantity").value || null;
+    const layer     = modal.querySelector("#adv-layer").value;
+    const targetType =
+	  modal.querySelector("#adv-target-type")?.value || "";
+
+	const targetStage =
+	  targetType === "stage"
+		? modal.querySelector("#adv-target-stage")?.value || null
+		: null;
+
+	const targetGroup =
+	  targetStage
+		? modal.querySelector("#adv-target-group")?.value || null
+		: null;
+	const description = modal.querySelector("#adv-description").value || null;
+
+    if (!condition || !layer) {
+      alert("Condition and layer are required.");
+      return;
+    }
+
+	const payload = {
+	  source_stage_id: stageId,
+	  condition,
+	  position,
+	  quantity,
+	  layer,
+	  target_stage_id: targetStage,
+	  target_group_id: targetGroup,
+	  description
+	};
+
+	let query;
+
+	if (modal.dataset.ruleId) {
+	  query = supabase
+		.from("advancement_rules")
+		.update(payload)
+		.eq("id", modal.dataset.ruleId);
+	} else {
+	  query = supabase
+		.from("advancement_rules")
+		.insert(payload);
+	}
+
+	const { error } = await query;
+
+
+    if (error) {
+      console.error(error);
+      alert("Failed to save rule.");
+      return;
+    }
+
+    modal.remove();
+
+    // Re-load rules screen
+    loadStageAdvancementRules(
+      window.currentTournamentId,
+      stageId
+    );
+  });
+}
 
 async function loadStagesForEdition(editionId) {
   const container = document.getElementById("structure-stages");
@@ -2004,7 +3030,7 @@ function renderStages(stages) {
   });
 }
 
-function renderStageCard(stage, groups) {
+function renderStageCard(stage, groups, advancementRules) {
   const stageGroups = groups.filter(g => g.stage_id === stage.id);
 
   return `
@@ -2038,14 +3064,28 @@ function renderStageCard(stage, groups) {
             : `<div class="empty-message">No groups yet</div>`
         }
       </div>
+		<button
+		  class="header-btn small"
+		  data-add-groups-stage="${stage.id}"
+		>
+		  + Add group / round
+		</button>
+	<div class="structure-subsection"><br>
+  <div class="subsection-title">Advancement rules</div>
 
-      <button
-        class="header-btn small add-group-btn"
-        data-stage-id="${stage.id}"
-      >
-        + Add group / round
-      </button>
+  <div class="subtitle">
+	Define how players advance from this stage
+  </div>
+
+  <button
+	class="header-btn small secondary"
+	data-advancement-stage="${stage.id}"
+	  >
+		Manage advancement rules
+	  </button>
+	</div>
     </div>
+</div>
   `;
 }
 
@@ -2209,7 +3249,6 @@ function wireGroupDelete() {
   });
 }
 
-
 // =======================================================
 // 14. TOURNAMENT MANAGE TAB (EVENT WIRING / MUTATIONS)
 // =======================================================
@@ -2236,41 +3275,15 @@ function wireManageEditionsStages() {
         };
     }
 
-    if (addStageBtn) {
-        addStageBtn.onclick = async () => {
-            const editionId = window.tournamentContext.editionId;
-            if (!editionId) {
-                alert("Select an edition first.");
-                return;
-            }
-
-            const name = prompt("Stage name:");
-            if (!name) return;
-
-            const type = prompt("Stage type (group / knockout):", "group");
-            if (!type) return;
-
-            // find next order_index
-            const { data: existing } = await supabase
-                .from("stages")
-                .select("order_index")
-                .eq("edition_id", editionId)
-                .order("order_index", { ascending: false })
-                .limit(1);
-
-            const nextOrder = existing?.[0]?.order_index ?? 0;
-
-            await supabase.from("stages").insert({
-                edition_id: editionId,
-                name,
-                stage_type: type,
-                order_index: nextOrder + 1,
-            });
-
-            window.tournamentContext.stageId = null;
-            loadTournamentOverview(window.currentTournamentId);
-        };
-    }
+	if (addStageBtn) {
+	  addStageBtn.onclick = () => {
+		if (!window.tournamentContext.editionId) {
+		  alert("Select an edition first.");
+		  return;
+		}
+		openAddStageModal();
+	  };
+	}
 
     const addMatchBtn = document.getElementById("add-match-btn");
 
@@ -2354,47 +3367,97 @@ async function createEditionPrompt(tournamentId) {
   }
 }
 
-async function createStagePrompt(editionId) {
-  if (!editionId) {
-    alert("Select an edition first.");
-    return;
-  }
+function openAddGroupsOverlay(stageId) {
+  // Remove existing overlay if any
+  document.querySelector(".overlay-backdrop")?.remove();
 
-  const name = prompt("Stage name (e.g. Group Stage):");
-  if (!name) return;
+  const backdrop = document.createElement("div");
+  backdrop.className = "overlay-backdrop";
 
-  // Determine next order_index for this edition
-  const { data: existing, error: listErr } = await supabase
-    .from("stages")
-    .select("order_index")
-    .eq("edition_id", editionId)
-    .order("order_index", { ascending: false })
-    .limit(1);
+  backdrop.innerHTML = `
+    <div class="overlay-card" style="max-width:420px;">
+      <button class="overlay-close" id="add-groups-close">✕</button>
 
-  if (listErr) console.warn(listErr);
+      <h3>Add groups / rounds</h3>
 
-  const nextIndex =
-    existing && existing.length ? (existing[0].order_index ?? 0) + 1 : 1;
+      <label class="section-title">
+        One per line
+      </label>
 
-  const { error } = await supabase
-    .from("stages")
-    .insert({
-      edition_id: editionId,
-      name: name.trim(),
-      order_index: nextIndex,
+      <textarea
+        id="add-groups-input"
+        class="form-input form-textarea"
+        rows="6"
+        placeholder="Group A&#10;Group B&#10;Group C"
+      ></textarea>
+
+      <div
+        id="add-groups-error"
+        class="error"
+        style="margin-top:6px;"
+      ></div>
+
+      <div class="modal-actions">
+        <button id="add-groups-cancel">Cancel</button>
+        <button id="add-groups-confirm">Add</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(backdrop);
+
+  // Close handlers
+  document
+    .getElementById("add-groups-close")
+    .addEventListener("click", () => backdrop.remove());
+
+  document
+    .getElementById("add-groups-cancel")
+    .addEventListener("click", () => backdrop.remove());
+
+  // Confirm handler
+  document
+    .getElementById("add-groups-confirm")
+    .addEventListener("click", async () => {
+      const textarea =
+        document.getElementById("add-groups-input");
+      const errorEl =
+        document.getElementById("add-groups-error");
+
+      errorEl.textContent = "";
+
+      const names = textarea.value
+        .split(/\r?\n/)
+        .map(l => l.trim())
+        .filter(Boolean);
+
+      if (!names.length) {
+        errorEl.textContent =
+          "Please enter at least one group / round.";
+        return;
+      }
+
+      const rows = names.map((name, i) => ({
+        stage_id: stageId,
+        name,
+        order_index: i + 1
+      }));
+
+      const { error } = await supabase
+        .from("groups")
+        .insert(rows);
+
+      if (error) {
+        console.error(error);
+        errorEl.textContent =
+          "Failed to add groups / rounds.";
+        return;
+      }
+
+      backdrop.remove();
+      loadTournamentStructure(window.currentTournamentId);
     });
-
-  if (error) {
-    console.error(error);
-    alert("Failed to create stage.");
-    return;
-  }
-
-  if (window.currentTournamentId) {
-    loadTournamentOverview(window.currentTournamentId);
-  }
 }
-
 
 async function reorderStage(stageId, direction) {
     // Load current stage
@@ -2523,66 +3586,83 @@ function renderManageMatches(matches) {
   const el = document.getElementById("manage-matches-content");
   if (!el) return;
 
+  // ---------------------------------------------------
+  // EARLY GUARD — MUST BE BEFORE innerHTML RENDER
+  // ---------------------------------------------------
+  if (
+    !window.tournamentContext?.editionId ||
+    !window.tournamentContext?.stageId
+  ) {
+    el.innerHTML = `
+      <div class="card">
+        <div class="error">
+          Please select an edition and stage before managing matches.
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  // ---------------------------------------------------
+  // MAIN RENDER
+  // ---------------------------------------------------
   el.innerHTML = `
-	  <div class="manage-matches-grid">
-
-    <!-- BULK FIXTURE UPLOAD -->
-	<div class="bulk-upload-wrapper">
-
-	  <!-- Toggle row -->
-	  <div class="set-main-row bulk-header" id="bulk-toggle">
-		<div class="col left">Bulk fixture upload</div>
-		<div class="col mid"></div>
-		<div class="col right bulk-chevron">▸</div>
-	  </div>
-
-	  <!-- Collapsible body -->
-	  <div class="set-throws-expanded hidden" id="bulk-body">
-
-		<div class="bulk-row">
-		  <label>
-			Edition
-			<select id="bulk-edition"></select>
-		  </label>
-
-		  <label>
-			Stage
-			<select id="bulk-stage"></select>
-		  </label>
-		</div>
-
-		<label>
-		  CSV input
-		  <textarea
-			id="bulk-csv-input"
-			class="form-input form-textarea"
-			rows="6"
-		  ></textarea>
-		</label>
-
-		<input
-		  type="file"
-		  id="bulk-csv-file"
-		  class="form-input"
-		/>
-
-		<div class="form-row-inline">
-		  <button class="header-btn" id="bulk-validate-btn">Validate</button>
-		  <button class="header-btn secondary" id="bulk-upload-btn" disabled>Upload</button>
-		  <button class="header-btn small secondary" id="bulk-sample-btn">
-			Download sample
-		  </button>
-		</div>
-
-		<div id="bulk-errors" class="error"></div>
-		<div id="bulk-warnings"></div>
-		<div id="bulk-preview"></div>
-
-	  </div>
-	</div>
-
     <div class="manage-matches-grid">
 
+      <!-- BULK FIXTURE UPLOAD -->
+      <div class="bulk-upload-wrapper">
+
+        <div class="set-main-row bulk-header" id="bulk-toggle">
+          <div class="col left">Bulk fixture upload</div>
+          <div class="col mid"></div>
+          <div class="col right bulk-chevron">▸</div>
+        </div>
+
+        <div class="set-throws-expanded hidden" id="bulk-body">
+
+          <div class="bulk-row">
+            <label>
+              Edition
+              <select id="bulk-edition"></select>
+            </label>
+
+            <label>
+              Stage
+              <select id="bulk-stage"></select>
+            </label>
+          </div>
+
+          <label>
+            CSV input
+            <textarea
+              id="bulk-csv-input"
+              class="form-input form-textarea"
+              rows="6"
+            ></textarea>
+          </label>
+
+          <input
+            type="file"
+            id="bulk-csv-file"
+            class="form-input"
+          />
+
+          <div class="form-row-inline">
+            <button class="header-btn" id="bulk-validate-btn">Validate</button>
+            <button class="header-btn secondary" id="bulk-upload-btn" disabled>Upload</button>
+            <button class="header-btn small secondary" id="bulk-sample-btn">
+              Download sample
+            </button>
+          </div>
+
+          <div id="bulk-errors" class="error"></div>
+          <div id="bulk-warnings"></div>
+          <div id="bulk-preview"></div>
+
+        </div>
+      </div>
+
+      <!-- ADD MATCH -->
       <div class="card">
         <div class="section-title">Add match</div>
 
@@ -2598,61 +3678,74 @@ function renderManageMatches(matches) {
         </label>
         <div id="mm-p2-suggestions" class="friendly-suggestions"></div>
 
-		<label>
-		  Scheduled date & time
-		  <input type="datetime-local" id="mm-date" />
-		</label><br>
+        <label>
+          Scheduled date & time
+          <input type="datetime-local" id="mm-date" />
+        </label><br>
 
-		<label>
-		  Status
-		  <select id="mm-status">
-			<option value="scheduled">Scheduled</option>
-			<option value="live">Live</option>
-			<option value="finished">Finished</option>
-		  </select>
-		</label><br>
+        <label>
+          Status
+          <select id="mm-status">
+            <option value="scheduled">Scheduled</option>
+            <option value="live">Live</option>
+            <option value="finished">Finished</option>
+          </select>
+        </label><br>
 
-		<label>
-		  Final sets
-		  <div style="display:flex; gap:8px;">
-			<input type="number" id="mm-s1" min="0" placeholder="P1" style="width:70px;" />
-			<input type="number" id="mm-s2" min="0" placeholder="P2" style="width:70px;" />
-		  </div>
-		</label>
+        <label>
+          Final sets
+          <div style="display:flex; gap:8px;">
+            <input type="number" id="mm-s1" min="0" placeholder="P1" style="width:70px;" />
+            <input type="number" id="mm-s2" min="0" placeholder="P2" style="width:70px;" />
+          </div>
+        </label>
 
-		<div class="form-row-inline" style="margin-top:10px;">
-		  <button class="header-btn" id="mm-add-btn">
-			Create match only
-		  </button>
+        <div class="form-row-inline" style="margin-top:10px;">
+          <button class="header-btn" id="mm-add-btn">
+            Create match only
+          </button>
 
-		  <button class="header-btn secondary" id="mm-add-sets-btn">
-			Create & add sets
-		  </button>
-		</div>
+          <button class="header-btn secondary" id="mm-add-sets-btn">
+            Create & add sets
+          </button>
+        </div>
 
         <div class="error" id="mm-error" style="display:none;"></div>
       </div>
 
+      <!-- EXISTING MATCHES -->
       <div class="card">
-        <div class="section-title">Existing matches</div>
+        <div class="manage-section-header">
+          <h3>Existing Matches</h3>
+          <button
+            id="edit-all-sets-btn"
+            class="header-btn secondary"
+          >
+            Edit all sets
+          </button>
+        </div>
+
         <div class="matches-scroll">
           ${
             matches.length
-              ? matches
-                  .map(
-                    (m) => `
-					<div class="match-row" data-mid="${m.id}">
-					  <span>
-						${m.player1?.name || "TBC"} v ${m.player2?.name || "TBC"}
-						<span class="pill ${m.status}">${m.status}</span>
-					  </span>
-					  <span class="muted">
-						${m.match_date ? formatDate(m.match_date) : "No date"}
-						<button class="icon-btn delete-match" data-mid="${m.id}">✕</button>
-					  </span>
-					</div>   `
-                  )
-                  .join("")
+              ? matches.map(m => `
+                <div class="match-row" data-mid="${m.id}">
+                  <span>
+                    ${m.player1?.name || "TBC"} v ${m.player2?.name || "TBC"}
+                    <span class="pill ${m.status}">${m.status}</span>
+                  </span>
+                  <span class="muted">
+                    ${m.match_date ? formatDate(m.match_date) : "No date"}
+                    <button
+                      class="header-btn small danger delete-match"
+                      data-mid="${m.id}"
+                      title="Delete match"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                </div>
+              `).join("")
               : `<div class="empty-message">No matches yet.</div>`
           }
         </div>
@@ -2660,39 +3753,25 @@ function renderManageMatches(matches) {
 
     </div>
   `;
-  
-	if (
-	!window.tournamentContext?.editionId ||
-	!window.tournamentContext?.stageId
-	) {
-	el.innerHTML = `
-	<div class="card">
-	  <div class="error">
-		Please select an edition and stage before managing matches.
-	  </div>
-	</div>
-	`;
-	return;
-	}
 
-	wireManageMatchAdd();
-	initBulkUpload({
-		tournamentId: window.currentTournamentId,
-		editionId: window.tournamentContext.editionId,
-		stageId: window.tournamentContext.stageId
-	});
+  // ---------------------------------------------------
+  // WIRE BUTTONS (AFTER RENDER)
+  // ---------------------------------------------------
+  document
+    .getElementById("edit-all-sets-btn")
+    ?.addEventListener("click", openStageSetEditor);
+
+  wireManageMatchAdd();
+
+  initBulkUpload({
+    tournamentId: window.currentTournamentId,
+    editionId: window.tournamentContext.editionId,
+    stageId: window.tournamentContext.stageId
+  });
+
+  initGroupInitialisationTool();
 }
 
-document.querySelectorAll(".delete-match").forEach(btn => {
-  btn.addEventListener("click", async e => {
-    e.stopPropagation();
-    const mid = btn.dataset.mid;
-    if (!confirm("Delete this match?")) return;
-
-    await supabase.from("matches").delete().eq("id", mid);
-    loadTournamentMatchesManage(window.currentTournamentId);
-  });
-});
 
 function renderTournamentMatchesTable(matches = []) {
   const el = document.getElementById("tm-existing");
@@ -2705,10 +3784,494 @@ function renderTournamentMatchesTable(matches = []) {
   }
 
   el.innerHTML = matches.map(/* existing row HTML */).join("");
+ 
 }
 
 // =======================================================
-// 17. MATCH MANAGER — ADD MATCH WIRING (TYPEAHEAD + INSERT)
+// 16a. SETS EDITOR
+// =======================================================
+
+function openStageSetEditor() {
+  const stageId = window.tournamentContext.stageId;
+  if (!stageId) return;
+
+  // Remove any existing overlay
+  document.querySelector(".overlay-backdrop")?.remove();
+
+  // Create backdrop
+  const backdrop = document.createElement("div");
+  backdrop.className = "overlay-backdrop";
+
+  backdrop.innerHTML = `
+    <div class="overlay-card">
+      <button class="overlay-close" id="bulk-set-close">✕</button>
+
+	<h3>Edit all sets</h3>
+
+	<div class="card" style="margin-bottom:10px;">
+	  <div class="section-title">Bulk set import</div>
+
+	  <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+		<label>
+		  Number of sets
+		  <select id="bulk-set-count">
+			<option value="1">1 set</option>
+			<option value="2">2 sets</option>
+			<option value="3">3 sets</option>
+			<option value="4">4 sets</option>
+			<option value="5">5 sets</option>
+		  </select>
+		</label>
+
+		<label style="flex:1;">
+		  CSV input
+		  <textarea
+			id="bulk-set-csv"
+			class="form-input form-textarea"
+			rows="3"
+			placeholder="Paste CSV here"
+		  ></textarea>
+		</label>
+
+		<div style="align-self:flex-end;">
+		  <button class="header-btn secondary" id="bulk-set-parse">
+			Parse CSV
+		  </button>
+		</div>
+	  </div>
+
+	  <div id="bulk-set-errors" class="error" style="margin-top:6px;"></div>
+	</div>
+
+	<div id="bulk-set-grid">Loading…</div>
+
+      <div class="modal-actions">
+        <button id="bulk-set-cancel">Cancel</button>
+        <button id="bulk-set-save" disabled>Save results</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(backdrop);
+
+  // Close handlers
+  document
+    .getElementById("bulk-set-close")
+    .addEventListener("click", () => backdrop.remove());
+
+  document
+    .getElementById("bulk-set-cancel")
+    .addEventListener("click", () => backdrop.remove());
+
+  // Load data
+  loadStageMatchesAndSets(stageId);
+  
+	document
+	  .getElementById("bulk-set-count")
+	  .addEventListener("change", e => {
+		const count = Number(e.target.value);
+		stageGridModel.maxSetCount = count;
+		rebuildGridSetColumns();
+	  });
+
+	document
+	  .getElementById("bulk-set-parse")
+	  .addEventListener("click", parseBulkSetCsv);
+	  
+	  document
+    .getElementById("bulk-set-save")
+    .addEventListener("click", saveBulkSets);
+}
+
+function rebuildGridSetColumns() {
+  Object.values(stageGridModel.matches).forEach(match => {
+    match.player1.sets.length = stageGridModel.maxSetCount;
+    match.player2.sets.length = stageGridModel.maxSetCount;
+
+    for (let i = 0; i < stageGridModel.maxSetCount; i++) {
+      if (!match.player1.sets[i]) match.player1.sets[i] = { value: null };
+      if (!match.player2.sets[i]) match.player2.sets[i] = { value: null };
+    }
+
+    recalculateFss(match);
+  });
+
+  renderBulkSetGrid();
+}
+
+function parseBulkSetCsv() {
+  const text = document.getElementById("bulk-set-csv").value.trim();
+  const errorEl = document.getElementById("bulk-set-errors");
+  errorEl.textContent = "";
+
+  if (!text) {
+    errorEl.textContent = "CSV is empty.";
+    return;
+  }
+
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) {
+    errorEl.textContent = "CSV must contain a header and at least one row.";
+    return;
+  }
+
+  const header = lines[0].split(",").map(h => h.trim());
+  if (header[0] !== "p1" || header[1] !== "p2") {
+    errorEl.textContent = "CSV must start with columns: p1,p2";
+    return;
+  }
+
+  // Determine set columns
+  const setColumns = [];
+  for (let i = 4; i < header.length; i += 2) {
+    setColumns.push({
+      p1: header[i],
+      p2: header[i + 1]
+    });
+  }
+
+  const stagedUpdates = [];
+
+  for (let r = 1; r < lines.length; r++) {
+    const cells = lines[r].split(",").map(c => c.trim());
+
+    const p1Name = cells[0];
+    const p2Name = cells[1];
+
+    if (!p1Name || !p2Name) {
+      errorEl.textContent = `Row ${r + 1}: Player names are required.`;
+      return;
+    }
+
+    // Find matching grid match
+    const match = Object.values(stageGridModel.matches).find(
+      m =>
+        m.player1.name === p1Name &&
+        m.player2.name === p2Name
+    );
+
+    if (!match) {
+      errorEl.textContent =
+        `Row ${r + 1}: No match found for "${p1Name} v ${p2Name}".`;
+      return;
+    }
+	
+	match.dirty = true;
+
+    const updates = {
+      match,
+      p1Sets: [],
+      p2Sets: []
+    };
+
+    setColumns.forEach((_, i) => {
+		const rawP1 = cells[4 + i * 2];
+		const rawP2 = cells[5 + i * 2];
+
+		const p1Val = rawP1 === "" ? null : Number(rawP1);
+		const p2Val = rawP2 === "" ? null : Number(rawP2);
+
+		if (p1Val === null && p2Val === null) {
+		  updates.p1Sets.push(null);
+		  updates.p2Sets.push(null);
+		  return;
+		}
+
+      if (p1Val === 50 && p2Val === 50) {
+        errorEl.textContent =
+          `Row ${r + 1}: 50–50 is not allowed.`;
+        return;
+      }
+
+      updates.p1Sets.push(Number.isNaN(p1Val) ? null : p1Val);
+      updates.p2Sets.push(Number.isNaN(p2Val) ? null : p2Val);
+    });
+
+    stagedUpdates.push(updates);
+  }
+
+  // If CSV needs more sets, expand grid
+  const requiredSets = Math.max(
+    stageGridModel.maxSetCount,
+    ...stagedUpdates.map(u => u.p1Sets.length)
+  );
+
+  stageGridModel.maxSetCount = requiredSets;
+  rebuildGridSetColumns();
+
+  // Apply updates
+  stagedUpdates.forEach(u => {
+    for (let i = 0; i < requiredSets; i++) {
+      u.match.player1.sets[i].value = u.p1Sets[i] ?? null;
+      u.match.player2.sets[i].value = u.p2Sets[i] ?? null;
+    }
+    recalculateFss(u.match);
+  });
+
+  renderBulkSetGrid();
+  
+	const hasAnyData = Object.values(stageGridModel.matches)
+	.some(matchHasAnySet);
+
+	document.getElementById("bulk-set-save").disabled = !hasAnyData;
+
+}
+
+async function loadStageMatchesAndSets(stageId) {
+	  console.log("LOAD STAGE SETS", stageId);
+  const gridEl = document.getElementById("bulk-set-grid");
+  gridEl.textContent = "Loading…";
+
+  const { data: matches, error: matchError } = await supabase
+    .from("matches")
+    .select(`
+      id,
+      player1:player1_id ( id, name ),
+      player2:player2_id ( id, name )
+    `)
+    .eq("stage_id", stageId)
+	.neq("status", "structure")
+    .order("match_date");
+
+  if (matchError) {
+    gridEl.textContent = "Failed to load matches";
+    return;
+  }
+
+  const matchIds = matches.map(m => m.id);
+
+  const { data: sets } = await supabase
+    .from("sets")
+    .select("*")
+    .in("match_id", matchIds);
+
+  buildGridModel(matches, sets);
+}
+
+let stageGridModel = null;
+
+function buildGridModel(matches, sets) {
+  stageGridModel = {
+    matches: {},
+    maxSetCount: 1
+  };
+
+  const setsByMatch = {};
+  (sets || []).forEach(s => {
+    if (!setsByMatch[s.match_id]) {
+      setsByMatch[s.match_id] = [];
+    }
+    setsByMatch[s.match_id].push(s);
+    stageGridModel.maxSetCount = Math.max(
+      stageGridModel.maxSetCount,
+      s.set_number
+    );
+  });
+
+	matches.forEach(m => {
+	  if (!m.player1 || !m.player2) return;
+
+	  stageGridModel.matches[m.id] = {
+		matchId: m.id,
+
+		// ADD THESE TWO LINES
+		player1_id: m.player1.id,
+		player2_id: m.player2.id,
+
+		player1: {
+		  name: m.player1.name,
+		  sets: []
+		},
+		player2: {
+		  name: m.player2.name,
+		  sets: []
+		},
+		derivedFss: { p1: 0, p2: 0 }
+	  };
+	});
+
+  Object.values(stageGridModel.matches).forEach(match => {
+    for (let i = 0; i < stageGridModel.maxSetCount; i++) {
+      match.player1.sets[i] = { value: null };
+      match.player2.sets[i] = { value: null };
+    }
+  });
+
+  (sets || []).forEach(s => {
+    const match = stageGridModel.matches[s.match_id];
+    if (!match) return;
+
+    const i = s.set_number - 1;
+    match.player1.sets[i].value = s.score_player1;
+    match.player2.sets[i].value = s.score_player2;
+  });
+
+  Object.values(stageGridModel.matches).forEach(recalculateFss);
+
+  renderBulkSetGrid();
+}
+
+function determineSetWinner(p1, p2, match) {
+  if (p1 === 50 && p2 <= 49) return match.player1_id;
+  if (p2 === 50 && p1 <= 49) return match.player2_id;
+  return null;
+}
+
+function recalculateFss(match) {
+  match.derivedFss = { p1: 0, p2: 0 };
+
+  match.player1.sets.forEach((_, i) => {
+    const p1 = match.player1.sets[i].value;
+    const p2 = match.player2.sets[i].value;
+
+    if (p1 === 50 && p2 <= 49) match.derivedFss.p1++;
+    if (p2 === 50 && p1 <= 49) match.derivedFss.p2++;
+  });
+}
+
+function extractValidSets(match) {
+  const sets = [];
+
+  match.player1.sets.forEach((_, i) => {
+    const p1 = match.player1.sets[i].value;
+    const p2 = match.player2.sets[i].value;
+
+    if (p1 == null && p2 == null) return;
+
+    let winnerId = null;
+
+    // EXACT rule: one side must hit 50, other ≤ 49
+    if (p1 === 50 && p2 <= 49) {
+      winnerId = match.player1_id;
+    } else if (p2 === 50 && p1 <= 49) {
+      winnerId = match.player2_id;
+    }
+
+    sets.push({
+      set_number: i + 1,
+      score_player1: p1,
+      score_player2: p2,
+      winner_player_id: winnerId
+    });
+  });
+
+  return sets;
+}
+
+function renderBulkSetGrid() {
+  const gridEl = document.getElementById("bulk-set-grid");
+  gridEl.innerHTML = "";
+
+  Object.values(stageGridModel.matches).forEach(match => {
+    const block = document.createElement("div");
+    block.style.borderBottom = "1px solid #ccc";
+    block.style.padding = "6px 0";
+	
+	if (matchHasAnySet(match)) {
+	block.style.background = "rgba(62, 166, 255, 0.06)";
+	}
+
+
+    block.innerHTML = `
+      <div style="display:flex; gap:6px;">
+        ${renderPlayerRow(match.player1, match, "p1")}
+      </div>
+      <div style="display:flex; gap:6px;">
+        ${renderPlayerRow(match.player2, match, "p2")}
+      </div>
+    `;
+
+    gridEl.appendChild(block);
+  });
+	const saveBtn = document.getElementById("bulk-set-save");
+	if (saveBtn) {
+	  saveBtn.disabled = !Object.values(stageGridModel.matches).some(match =>
+		extractValidSets(match).length > 0
+	  );
+	}
+}
+
+async function saveBulkSets() {
+  const saveBtn = document.getElementById("bulk-set-save");
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Saving…";
+
+  try {
+    for (const match of Object.values(stageGridModel.matches)) {
+      const validSets = extractValidSets(match);
+      if (validSets.length === 0) continue;
+
+      // 1️⃣ delete existing sets
+      await supabase
+        .from("sets")
+        .delete()
+        .eq("match_id", match.matchId);
+
+      // 2️⃣ insert new sets
+      const rows = validSets.map(s => ({
+        match_id: match.matchId,
+        set_number: s.set_number,
+        score_player1: s.score_player1,
+        score_player2: s.score_player2,
+        winner_player_id: s.winner_player_id
+      }));
+
+      await supabase.from("sets").insert(rows);
+
+      // 3️⃣ update match summary
+      await supabase
+        .from("matches")
+        .update({
+          status: "finished",
+          final_sets_player1: match.derivedFss.p1,
+          final_sets_player2: match.derivedFss.p2
+        })
+        .eq("id", match.matchId);
+    }
+
+    alert("Sets saved successfully");
+    loadTournamentOverview(window.currentTournamentId);
+
+  } catch (err) {
+    console.error(err);
+    alert("Failed to save sets. See console.");
+  } finally {
+    saveBtn.textContent = "Save results";
+    saveBtn.disabled = false;
+  }
+}
+
+function renderPlayerRow(player, match, side) {
+  return `
+    <div style="width:140px;">${player.name}</div>
+    <div style="width:40px; text-align:center;">
+      ${match.derivedFss[side]}
+    </div>
+    ${player.sets.map(set => `
+      <input
+        type="number"
+        value="${set.value ?? ""}"
+        disabled
+        style="width:44px;"
+      />
+    `).join("")}
+  `;
+}
+
+function matchHasAnySet(match) {
+  return match.player1.sets.some((s, i) => {
+    const p1 = s.value;
+    const p2 = match.player2.sets[i]?.value;
+
+    return (
+      p1 !== null ||
+      p2 !== null
+    );
+  });
+}
+
+// =======================================================
+// 17. TOURNAMENT INITIALISATION
 // =======================================================
 
 function wireManageMatchAdd() {
@@ -3098,8 +4661,11 @@ function initBulkUpload({ tournamentId, editionId, stageId }) {
   // --------------------------------------------------
   // Validate & preview
   // --------------------------------------------------
-  validateBtn.addEventListener("click", async () => {
-    resetMessages();
+	validateBtn.addEventListener("click", async () => {
+	  resetMessages();
+
+	  uploadBtn.disabled = true;   // ← force disabled
+	  warningsConfirmed = false;
 
     const csvText = csvInput.value.trim();
     const edId = editionSel.value;
@@ -3140,10 +4706,23 @@ function initBulkUpload({ tournamentId, editionId, stageId }) {
   // --------------------------------------------------
   uploadBtn.addEventListener("click", async () => {
     if (!lastValidationResult || !lastValidationResult.valid) return;
+	
+	const rows = lastValidationResult.matches.map(m => ({
+	  tournament_id: m.tournament_id,
+	  edition_id: m.edition_id,
+	  stage_id: m.stage_id,
+	  group_id: m.group_id,
+	  player1_id: m.player1_id,
+	  player2_id: m.player2_id,
+	  match_date: m.match_date_utc, // rename here
+	  status: "scheduled",
+	  final_sets_player1: 0,
+	  final_sets_player2: 0
+	}));
 
     const { error } = await supabase
       .from("matches")
-      .insert(lastValidationResult.matches);
+      .insert(rows);
 
     if (error) {
       errorsEl.textContent = "Upload failed. Nothing was added.";
@@ -3188,24 +4767,28 @@ function initBulkUpload({ tournamentId, editionId, stageId }) {
       .join("<br>");
   }
 
-  function renderWarnings(warnings) {
-    warningsEl.innerHTML = `
-      <div class="pill scheduled">
-        ⚠ ${warnings[0].message}
-      </div>
-      <label style="display:block;margin-top:6px;">
-        <input type="checkbox" id="bulk-confirm-warn">
-        I understand and want to continue
-      </label>
-    `;
+	function renderWarnings(warnings) {
+	  warningsEl.innerHTML = `
+		<div class="warning-block">
+		  ${warnings.map(w => `
+			<div class="pill scheduled">
+			  ⚠ Row ${w.row ?? "?"}: ${w.message}
+			</div>
+		  `).join("")}
+		</div>
+		<label style="display:block;margin-top:8px;">
+		  <input type="checkbox" id="bulk-confirm-warn">
+		  I understand and want to upload anyway
+		</label>
+	  `;
 
-    document
-      .getElementById("bulk-confirm-warn")
-      .addEventListener("change", e => {
-        warningsConfirmed = e.target.checked;
-        uploadBtn.disabled = !warningsConfirmed;
-      });
-  }
+	  document
+		.getElementById("bulk-confirm-warn")
+		.addEventListener("change", e => {
+		  warningsConfirmed = e.target.checked;
+		  uploadBtn.disabled = !warningsConfirmed;
+		});
+	}
 
   function renderPreview(matches) {
     previewEl.innerHTML = `
@@ -3221,12 +4804,18 @@ function initBulkUpload({ tournamentId, editionId, stageId }) {
         </thead>
         <tbody>
           ${matches.map(m => `
-            <tr>
+            <tr class="${m.isDuplicate ? "row-warning" : ""}">
               <td>${new Date(m.match_date_utc).toLocaleDateString()}</td>
               <td>${new Date(m.match_date_utc).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</td>
               <td>${m.player1_name}</td>
               <td>${m.player2_name}</td>
-              <td>${m.group_id || m.round_label}</td>
+              <td>
+			  ${
+				m.group_id
+				  ? `<span class="pill live">${m.group_name || "Group"}</span>`
+				  : `<span class="pill scheduled">Round: ${m.round_label}</span>`
+			  }
+			</td>
             </tr>
           `).join("")}
         </tbody>
@@ -3235,6 +4824,273 @@ function initBulkUpload({ tournamentId, editionId, stageId }) {
   }
 }
 
+function renderTournamentInitialisation({
+  tournament,
+  editionId,
+  stageId,
+  container
+}) {
+	console.log("RENDER INITIALISATION CALLED");
+  if (!container) return;
+
+  container.innerHTML = `
+    <div class="card">
+      <div class="section-title">Group initialisation</div>
+
+      <div class="set-main-row bulk-header" id="init-toggle">
+        <div class="col left">Initialise group players</div>
+        <div class="col mid"></div>
+        <div class="col right init-chevron">▸</div>
+      </div>
+
+      <div class="set-throws-expanded hidden" id="init-body">
+
+        <div class="bulk-row">
+          <label>
+            Group
+            <select id="init-group"></select>
+          </label>
+        </div>
+
+        <label>
+          Players (one per line; optional “,GB”)
+          <textarea
+            id="init-players"
+            class="form-input form-textarea"
+            rows="6"
+            placeholder="Dummy One\nDummy Two,GB\nDummy Three,FI"
+          ></textarea>
+        </label>
+
+        <div class="form-row-inline">
+          <button class="header-btn" id="init-add-btn">Add to group</button>
+        </div>
+
+        <div id="init-error" class="error"></div>
+        <div id="init-result" class="subtitle"></div>
+
+      </div>
+    </div>
+  `;
+
+  // now wire behaviour
+  initGroupInitialisationTool();
+}
+
+
+async function initGroupInitialisationTool() {
+  const toggle = document.getElementById("init-toggle");
+  const body = document.getElementById("init-body");
+  if (!toggle || !body) return;
+
+  const chevron = toggle.querySelector(".init-chevron");
+  const groupSel = document.getElementById("init-group");
+  const playersTa = document.getElementById("init-players");
+  const addBtn = document.getElementById("init-add-btn");
+  const errEl = document.getElementById("init-error");
+  const resEl = document.getElementById("init-result");
+
+  function setErr(msg) {
+    if (!errEl) return;
+    errEl.textContent = msg || "";
+  }
+  function setRes(msg) {
+    if (!resEl) return;
+    resEl.textContent = msg || "";
+  }
+
+  toggle.addEventListener("click", () => {
+    const open = body.classList.toggle("hidden") === false;
+    if (chevron) chevron.textContent = open ? "▾" : "▸";
+  });
+
+  // Load groups for current stage
+  const stageId = window.tournamentContext?.stageId;
+  if (!stageId || !groupSel) {
+    setErr("Select an edition and stage first.");
+    return;
+  }
+
+  const { data: groups, error: gErr } = await supabase
+    .from("groups")
+    .select("id, name")
+    .eq("stage_id", stageId)
+    .order("name");
+
+  if (gErr) {
+    console.error(gErr);
+    setErr("Failed to load groups.");
+    return;
+  }
+
+  groupSel.innerHTML = `<option value="">Select…</option>` + (groups || [])
+    .map(g => `<option value="${g.id}">${g.name}</option>`)
+    .join("");
+	
+	groupSel.addEventListener("change", async () => {
+	  const groupId = groupSel.value;
+	  playersTa.value = "";
+	  if (!groupId) return;
+
+	  const { data, error } = await supabase
+		.from("matches")
+		.select(`
+		  id,
+		  player1:player1_id ( name, country )
+		`)
+		.eq("status", "structure")
+		.eq("stage_id", stageId)
+		.eq("group_id", groupId)
+		.order("player1(name)");
+
+	  if (error) {
+		console.error(error);
+		setErr("Failed to load group players.");
+		return;
+	  }
+
+	  const lines = (data || []).map(r => {
+		const name = r.player1?.name;
+		const country = r.player1?.country;
+		return country ? `${name},${country}` : name;
+	  });
+
+	  playersTa.value = lines.join("\n");
+	});
+
+
+  if (!addBtn) return;
+
+  addBtn.addEventListener("click", async () => {
+    setErr("");
+    setRes("");
+
+    const groupId = groupSel.value;
+    if (!groupId) {
+      setErr("Group is required.");
+      return;
+    }
+
+    const text = (playersTa?.value || "").trim();
+    if (!text) {
+      setErr("Enter at least one player.");
+      return;
+    }
+
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    setRes("Adding players…");
+
+    const result = await syncGroupInitialisation({
+	  tournamentId: window.currentTournamentId,
+	  editionId: window.tournamentContext.editionId,
+	  stageId: window.tournamentContext.stageId,
+	  groupId,
+	  lines
+	});
+
+	setRes(
+	  `Added ${result.added}, removed ${result.removed}, unchanged ${result.skipped}` +
+	  (result.errors.length ? `, errors ${result.errors.length}` : "")
+	);
+
+    // Refresh overview so standings picks up seeded players immediately
+    loadTournamentOverview(window.currentTournamentId);
+  });
+}
+
+async function syncGroupInitialisation({
+  tournamentId,
+  editionId,
+  stageId,
+  groupId,
+  lines
+}) {
+  const out = { added: 0, removed: 0, skipped: 0, errors: [] };
+
+  const desired = lines
+    .map(raw => {
+      const [name, country] = raw.split(",").map(s => s.trim());
+      return { name, country: country || null };
+    })
+    .filter(p => p.name);
+
+  const { data: existing, error } = await supabase
+    .from("matches")
+    .select(`
+      id,
+      player1_id,
+      player1:player1_id ( name )
+    `)
+    .eq("status", "structure")
+    .eq("stage_id", stageId)
+    .eq("group_id", groupId);
+
+  if (error) throw error;
+
+  const existingByName = new Map(
+    (existing || []).map(r => [r.player1.name.toLowerCase(), r])
+  );
+
+  const desiredNames = new Set(desired.map(p => p.name.toLowerCase()));
+
+  // Remove
+  for (const [name, row] of existingByName) {
+    if (!desiredNames.has(name)) {
+      await supabase.from("matches").delete().eq("id", row.id);
+      out.removed++;
+    }
+  }
+
+  // Add
+  for (const p of desired) {
+    if (existingByName.has(p.name.toLowerCase())) {
+      out.skipped++;
+      continue;
+    }
+
+    try {
+      let { data: player } = await supabase
+        .from("players")
+        .select("id")
+        .eq("name", p.name)
+        .maybeSingle();
+
+      if (!player) {
+        const { data: created } = await supabase
+          .from("players")
+          .insert({
+            name: p.name,
+            country: p.country,
+            is_guest: false
+          })
+          .select("id")
+          .single();
+
+        player = created;
+      }
+
+      await supabase.from("matches").insert({
+        tournament_id: tournamentId,
+        edition_id: editionId,
+        stage_id: stageId,
+        group_id: groupId,
+        status: "structure",
+        player1_id: player.id,
+        player2_id: null,
+        match_date: new Date().toISOString(),
+        final_sets_player1: 0,
+        final_sets_player2: 0
+      });
+
+      out.added++;
+    } catch (err) {
+      console.error(err);
+      out.errors.push(p.name);
+    }
+  }
+
+  return out;
+}
 
 // =======================================================
 // 18. MATCH DETAIL VIEW (HEADER + SETS LIST)
@@ -4614,6 +6470,9 @@ function handleRoute() {
     const [pathPart, queryString] = withoutHash.split("?");
     const parts = pathPart.split("/");
     const params = new URLSearchParams(queryString || "");
+	
+	// default: no subview
+	window.tournamentContext.manageSubview = null;
 
     // #/tournaments
     if (parts[1] === "tournaments") {
@@ -4662,16 +6521,54 @@ function handleRoute() {
         return;
     }
 	
+	// #/tournament/<tid>/structure/advancement/<stageId>
+	if (
+	  parts[1] === "tournament" &&
+	  parts[2] &&
+	  parts[3] === "structure" &&
+	  parts[4] === "advancement" &&
+	  parts[5]
+	) {
+	  const tournamentId = parts[2];
+
+	  //  REHYDRATE CONTEXT
+	  window.currentTournamentId = tournamentId;
+	  window.tournamentContext = window.tournamentContext || {};
+
+	  loadStageAdvancementRules(tournamentId, parts[5]);
+	  return;
+	}
+	
 	// #/tournament/<tid>/structure
 	if (
-		parts[1] === "tournament" &&
-		parts[2] &&
-		parts[3] === "structure"
+	  parts[1] === "tournament" &&
+	  parts[2] &&
+	  parts[3] === "structure"
 	) {
-		loadTournamentStructure(parts[2]);
-		return;
-	}
+	  const tournamentId = parts[2];
 
+	  // REHYDRATE CONTEXT
+	  window.currentTournamentId = tournamentId;
+	  window.tournamentContext = window.tournamentContext || {};
+
+	  loadTournamentStructure(tournamentId);
+	  return;
+	}
+		
+	// #/tournament/<tid>/initialisation
+	if (
+	  parts[1] === "tournament" &&
+	  parts[2] &&
+	  parts[3] === "initialisation"
+	) {
+	  const tournamentId = parts[2];
+
+	  window.tournamentContext.manageSubview = "initialisation";
+	  window.tournamentContext.activeOverviewTab = "manage";
+
+	  loadTournamentOverview(tournamentId);
+	  return;
+	}
 
     // #/tournament/<tid>/overview?tab=...
     if (parts[1] === "tournament" && parts[2]) {
@@ -4843,8 +6740,59 @@ function setupTournamentDateBar(matches) {
 
 }
 
+function renderLoginScreen() {
+  setContent(`
+    <div class="card" style="min-width:480px; max-width:600px;margin:40px auto;">
+      <div class="tournament-header">
+        <div class="tournament-name">Login</div>
+        <div class="subtitle">Authorised users only</div>
+      </div>
+
+      <label>
+        Email
+        <input type="email" id="login-email" />
+      </label>
+      <label>
+        Password
+        <input type="password" id="login-password" />
+      </label>
+      <button class="header-btn" id="login-btn">
+        Log in
+      </button>
+
+      <div class="error" id="login-error" style="display:none;margin-top:8px;"></div>
+    </div>
+  `);
+
+  document.getElementById("login-btn").onclick = async () => {
+    const email = document.getElementById("login-email").value;
+    const password = document.getElementById("login-password").value;
+    const err = document.getElementById("login-error");
+
+    err.style.display = "none";
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) {
+      err.textContent = error.message;
+      err.style.display = "block";
+      return;
+    }
+
+    // success → reload app state
+    await initAuth();
+    handleRoute();
+  };
+}
+
+window.renderLoginScreen = renderLoginScreen;
+
+
 // =======================================================
-// 28. INITIAL ROUTE BINDING
+// 28. INITIAL ROUTE BINDING (AUTH-AWARE)
 // =======================================================
 
 // Initial navigation
@@ -4852,47 +6800,6 @@ handleRoute();
 
 // React to browser navigation
 window.addEventListener("hashchange", handleRoute);
-
-// =======================================================
-// PROFILE / PERMISSIONS SWITCHER
-// =======================================================
-
-document.addEventListener("DOMContentLoaded", () => {
-  const select = document.getElementById("profile-select");
-  if (!select) return;
-
-function applyProfile(name) {
-    if (name === "Joe") {
-      window.currentUser = {
-        name: "Joe",
-        role: "admin",
-      };
-    } else {
-      window.currentUser = {
-        name: "Guest",
-        role: "guest",
-      };
-    }
-
-    // Legacy compatibility
-    window.SUPERADMIN = isSuperAdmin();
-	
-	// ---- Permissions bridge ----
-	window.SUPERADMIN = window.currentUser?.role === "admin";
-
-	// Refresh UI that depends on permissions
-	renderBottomBar();
-  }
-
-  // Initial state
-  applyProfile(select.value);
-
-  // React to changes
-  select.addEventListener("change", () => {
-    applyProfile(select.value);
-  });
-});
-
 
 // =======================================================
 // 30. GLOBAL CLICK DELEGATES (PLAYER LINKS / TABS)
@@ -4910,7 +6817,7 @@ document.addEventListener("click", (ev) => {
 
     window.location.hash = `#/player/${pid}`;
 });
-
+ 
 document.addEventListener("click", (ev) => {
     const btn = ev.target.closest(".tab-btn");
     if (!btn) return;
@@ -4924,3 +6831,30 @@ document.addEventListener("click", (ev) => {
 
     window.location.hash = `#/player/${pid}?tab=${tab}`;
 });
+
+document.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".delete-match");
+  if (!btn) return;
+
+  e.preventDefault();
+  e.stopPropagation();
+
+  const mid = btn.dataset.mid;
+  if (!mid) return;
+
+  if (!confirm("Delete this match?")) return;
+
+  const { error } = await supabase
+    .from("matches")
+    .delete()
+    .eq("id", mid);
+
+  if (error) {
+    console.error(error);
+    alert("Failed to delete match.");
+    return;
+  }
+
+  loadTournamentMatchesManage(window.currentTournamentId);
+});
+

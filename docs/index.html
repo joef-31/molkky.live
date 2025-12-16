@@ -14,44 +14,15 @@
 
 <body>
   <div id="app-shell">
-    <div id="app-header">
-      <a href="index.html"><img src="logo.png" width="200px"></a>
-      <div class="header-tools">
+		<div id="app-header">
+		  <a href="index.html">
+			<img src="logo.png" width="200px">
+		  </a>
 
-		<!--
-		<select id="profile-select" class="profile-select">
-		    <option value="Guest">Guest</option>
-		    <option value="Joe">Joe</option>
-		  </select>
-		-->
-
-		<button id="add-friendly-btn" class="header-btn" style="display:none;">
-		  Add friendly
-		</button>
-
-        <button id="scoreBtn" class="header-btn" style="display:none;" title="Score this match"  data-locked="no">
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <rect x="4" y="3" width="16" height="18" rx="3" ry="3" fill="none"
-                  stroke="currentColor" stroke-width="1.6" />
-            <rect x="7" y="5.5" width="10" height="4" rx="1"
-                  fill="none" stroke="currentColor" stroke-width="1.4" />
-            <rect x="7"  y="11" width="3" height="3" rx="0.6"
-                  fill="none" stroke="currentColor" stroke-width="1.2" />
-            <rect x="10.5" y="11" width="3" height="3" rx="0.6"
-                  fill="none" stroke="currentColor" stroke-width="1.2" />
-            <rect x="14" y="11" width="3" height="3" rx="0.6"
-                  fill="none" stroke="currentColor" stroke-width="1.2" />
-            <rect x="7"  y="15" width="3" height="3" rx="0.6"
-                  fill="none" stroke="currentColor" stroke-width="1.2" />
-            <rect x="10.5" y="15" width="3" height="3" rx="0.6"
-                  fill="none" stroke="currentColor" stroke-width="1.2" />
-            <rect x="14" y="15" width="3" height="3" rx="0.6"
-                  fill="none" stroke="currentColor" stroke-width="1.2" />
-          </svg>
-          <span class="header-btn-label">Score</span>
-        </button>
-      </div>
-    </div>
+		  <div class="header-tools">
+			<div id="auth-controls"></div>
+		  </div>
+		</div>
 
 <div id="backBtn">⬅ Back</div>
 
@@ -143,9 +114,9 @@
   <!-- JS modules -->
 	<script src="js/db.js"></script>
 	<script src="js/bulkFixtures.js"></script>
+	<script src="js/auth.js"></script>
 	<script src="js/scoring.js"></script>
 	<script src="js/ui.js"></script>
 	<script src="js/app2.js"></script>
 </body>
 </html>
-

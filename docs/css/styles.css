@@ -59,6 +59,12 @@ select:focus {
   box-shadow: 0 0 0 1px rgba(77, 163, 255, 0.4);
 }
 
+/* Fix white dropdown in dark theme */
+select option {
+  background-color: #0b1f3a;
+  color: #ffffff;
+}
+
 
 #app-shell {
   max-width: 640px;
@@ -202,6 +208,255 @@ h1 {
 
 .tab-page.hidden {
     display: none;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-card {
+  background: #0b1f2a;
+  border-radius: 12px;
+  padding: 16px;
+  width: 420px;
+  max-width: 90%;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.modal-title {
+  font-weight: 600;
+}
+
+.modal-body label {
+  display: block;
+  margin-bottom: 10px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* ================================
+   AUTH MODAL INPUT STYLING
+   ================================ */
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.modal-subtitle {
+  font-size: 13px;
+  color: #9fb3c8;
+  margin-top: 2px;
+}
+
+.modal-body label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: #b9c7d6;
+}
+
+/* Dark themed inputs */
+.modal-body input[type="email"],
+.modal-body input[type="password"] {
+  background: #0b2236;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+/* Focus state */
+.modal-body input[type="email"]:focus,
+.modal-body input[type="password"]:focus {
+  outline: none;
+  border-color: #3ea6ff;
+  box-shadow: 0 0 0 1px rgba(62, 166, 255, 0.4);
+}
+
+/* Error text */
+.modal-body .error {
+  color: #ff6b6b;
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+
+/* Advancement condition indicator */
+.adv-indicator {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  margin-left: 6px;
+}
+
+/* Positive advancement (all winners, incl. runners-up, best-placed, etc.) */
+.adv-advance {
+  background: #1e88e5; /* blue */
+}
+
+/* Negative advancement (elimination / walk-down) */
+.adv-eliminate {
+  background: #e53935; /* red */
+}
+
+/* Neutral / non-advancing (only if you still need it) */
+.adv-neutral {
+  background: #9e9e9e; /* grey */
+}
+
+/* Layer opacity (priority) */
+.adv-layer-1 { opacity: 1; }
+.adv-layer-2 { opacity: 0.7; }
+.adv-layer-3 { opacity: 0.45; }
+.adv-layer-4 { opacity: 0.25; }
+
+.adv-notes {
+  margin-top: 12px;
+  font-size: 0.9em;
+}
+
+.adv-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+/* Position cell base */
+.pos-cell {
+  position: relative;
+  text-align: center;
+}
+
+.pos-number {
+  display: inline-block;
+  margin-left: 8px;   /* this WILL work */
+  font-weight: 600;
+}
+
+.pos-cell::before {
+  content: "";
+  position: absolute;
+  left: 6px;            /* moves bar further left */
+  top: 3px;             /* your chosen trim */
+  bottom: 3px;
+  width: 3px;
+  border-radius: 2px;
+}
+/* Vertical advancement bar */
+.pos-cell.adv-winner::before,
+.pos-cell.adv-nth_place::before,
+.pos-cell.adv-best_placed::before,
+.pos-cell.adv-loser::before,
+.pos-cell.adv-all::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 3px;
+  bottom: 3px;            /* trims top/bottom to remove flicks */
+  width: 4px;
+  border-radius: 2px;
+  opacity: 1;
+}
+
+/* Colours */
+.pos-cell.adv-winner::before {
+  background-color: #1e88e5;
+}
+
+.pos-cell.adv-nth_place::before {
+  background-color: #f9a825;
+}
+
+.pos-cell.adv-best_placed::before {
+  background-color: #8e24aa;
+}
+
+.pos-cell.adv-loser::before {
+  background-color: #e53935;
+}
+
+.pos-cell.adv-all::before {
+  background-color: #9e9e9e;
+}
+
+/* Layer priority */
+.pos-cell.adv-layer-2::before { opacity: 0.7; }
+.pos-cell.adv-layer-3::before { opacity: 0.45; }
+.pos-cell.adv-layer-4::before { opacity: 0.25; }
+
+/* Advancement notes row (below standings) */
+.adv-note-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 4px 6px;
+  margin-top: 2px;
+
+  font-size: 0.82rem;
+  color: var(--text-main);
+
+  /* visual harmony with table rows */
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+}
+
+/* =================================
+   Advancement condition colours
+   ================================= */
+
+/* Advancement note rows use the SAME bar, different spacing */
+.pos-cell.adv-note {
+  text-align: left;
+  padding: 3px 8px 3px 24px; /* space for the bar */
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+/* Status note indicators – SAME colours as standings */
+.adv-indicator.adv-winner {
+  background-color: #1e88e5;
+}
+
+.adv-indicator.adv-nth_place {
+  background-color: #f9a825;
+}
+
+.adv-indicator.adv-best_placed {
+  background-color: #8e24aa;
+}
+
+.adv-indicator.adv-loser {
+  background-color: #e53935;
+}
+
+.adv-indicator.adv-all {
+  background-color: #9e9e9e;
 }
 
 .simple-table {
@@ -914,10 +1169,10 @@ input[type="number"] {
 
 .standings-table th.pos,
 .standings-table td.pos {
-  width: 1.8em;
-  min-width: 1.8em;
-  max-width: 1.8em;
-  padding: 0;
+  width: 2.3em;
+  min-width: 2.3em;
+  max-width: 2.3em;
+  padding: 5px;
   text-align: center;
 }
 
@@ -1472,6 +1727,56 @@ input[type="number"] {
   margin-top: 6px;
 }
 
+#bulk-preview {
+  overflow-x: auto;              /* allow horizontal scroll on mobile */
+  margin-top: 8px;
+}
+
+#bulk-preview .simple-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;               /* ↓ smaller than normal tables */
+  line-height: 1.25;
+}
+
+#bulk-preview .simple-table th,
+#bulk-preview .simple-table td {
+  padding: 6px 8px;              /* tighter rows */
+  white-space: nowrap;           /* prevent row height blow-up */
+}
+
+#bulk-preview .simple-table th {
+  font-weight: 600;
+  opacity: 0.85;
+}
+
+/* Player columns: allow truncation */
+#bulk-preview .simple-table td:nth-child(3),
+#bulk-preview .simple-table td:nth-child(4) {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Group / round column */
+#bulk-preview .simple-table td:nth-child(5) {
+  max-width: 100px;
+  opacity: 0.8;
+}
+
+/* Zebra striping for readability */
+#bulk-preview .simple-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Bulk set editor grid scroll */
+#bulk-set-grid {
+  flex: 1;                 /* take remaining height */
+  overflow-y: auto;        /* enable vertical scroll */
+  margin-top: 8px;
+  padding-right: 6px;      /* avoid scrollbar overlap */
+}
+
 /* Responsive tweaks */
 
 @media (max-width: 640px) {
@@ -1486,9 +1791,9 @@ input[type="number"] {
   } 
   .pill {
     min-width: 32px;
-    max-width: 36px;
+    max-width: 60px;
     padding: 0 4px;
-    font-size: 0.3rem;
+    font-size: 0.55rem;
     letter-spacing: 0.04em;
   }
   .live-throwstrip-row {
@@ -1517,5 +1822,9 @@ input[type="number"] {
 
   .scoring-buttons-grid {
     gap: 5px;
+  }
+  
+  #bulk-preview .simple-table {
+    font-size: 11px;
   }
 }

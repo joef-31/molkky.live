@@ -229,39 +229,54 @@ async function validateBulkFixtures({
     let roundName = null;
 
 	if (stage.stage_type === "group") {
-	  let group = groupByName.get(roundLabel);
+	  const label = roundLabel.trim();
+	  const group = groupByName.get(label);
 
 	  if (!group) {
-		// Mark group for creation (once per name)
-		if (!groupsToCreate.has(roundLabel)) {
-		  groupsToCreate.set(roundLabel, stageId);
-		}
-
-		// Temporary placeholder, resolved after creation
-		groupId = `__NEW__:${roundLabel}`;
-	  } else {
-		groupId = group.id;
+		result.errors.push({
+		  row: rowNumber,
+		  field: "round",
+		  message: `Unknown group: "${label}"`
+		});
+		continue;
 	  }
+
+	  groupId = group.id;
+	  roundName = group.name;
 	} else {
-	  roundName = roundLabel;
+	  roundName = roundLabel.trim();
 	}
+	
+	const dup = (existingMatches || []).some(m => {
+	  return (
+		(m.player1_id === p1.id && m.player2_id === p2.id) ||
+		(m.player1_id === p2.id && m.player2_id === p1.id)
+	  );
+	});
 
-    // Duplicate detection (warning only)
-    if (!duplicateDetected) {
-      const dup = (existingMatches || []).some(m =>
-        m.player1_id === p1.id &&
-        m.player2_id === p2.id &&
-        m.match_date === utcDate
-      );
+	if (dup) {
+	  duplicateDetected = true;
 
-      if (dup) duplicateDetected = true;
-    }
+	  result.warnings.push({
+		row: rowNumber,
+		field: "duplicate",
+		message: `Duplicate fixture: ${player1Name} vs ${player2Name}`
+	  });
+	}
+	
+	console.log(
+	  "DUP CHECK",
+	  player1Name,
+	  player2Name,
+	  dup
+	);
 
     result.matches.push({
 		tournament_id: tournamentId,
 		edition_id: editionId,
 		stage_id: stageId,
 		group_id: groupId,
+		group_name: roundName,
 		round_label: roundName,
 		player1_id: p1.id,
 		player2_id: p2.id,
@@ -269,13 +284,6 @@ async function validateBulkFixtures({
 		player2_name: player2Name,
 		match_date_utc: utcDate,
 		status: "scheduled"
-    });
-  }
-
-  if (duplicateDetected) {
-    result.warnings.push({
-      code: "DUPLICATE_MATCH",
-      message: "One or more fixtures already exist and may be duplicated"
     });
   }
 
